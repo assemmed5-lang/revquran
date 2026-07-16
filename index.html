@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Suivi des fautes - Test</title>
+<link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap" rel="stylesheet">
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
+  body {
+    font-family: "Amiri Quran", 'Traditional Arabic', serif;
+    background: #f5f5f0;
+    display: flex;
+    flex-direction: column;
+  }
+  h1 {
+    text-align: center;
+    color: #2c3e2d;
+    font-size: 22px;
+    margin: 10px 0;
+  }
+  .screen {
+    max-width: 700px;
+    margin: 0 auto;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 15px;
+    overflow-y: auto;
+  }
+  .hidden {
+    display: none !important;
+  }
+  .menu-btn {
+    display: block;
+    width: 100%;
+    padding: 20px;
+    margin: 12px 0;
+    font-size: 20px;
+    font-weight: bold;
+    background: #2c3e2d;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .menu-btn.secondaire {
+    background: #6b8e6d;
+  }
+  .sourate-btn {
+    display: block;
+    width: 100%;
+    padding: 15px;
+    margin: 8px 0;
+    font-size: 20px;
+    background: #ffffff;
+    border: 2px solid #2c3e2d;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: right;
+  }
+  .sourate-btn:hover {
+    background: #eaf0ea;
+  }
+  .back-btn {
+    padding: 6px 12px;
+    background: #cccccc;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-family: sans-serif;
+    flex-shrink: 0;
+  }
+  .vide-msg {
+    text-align: center;
+    color: #888;
+    font-size: 18px;
+    margin-top: 40px;
+    font-family: sans-serif;
+  }
+
+  /* --- Écran sourate : plein écran sans scroll --- */
+  #screen-sourate {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding: 6px 8px;
+    box-sizing: border-box;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 2px;
+    flex-shrink: 0;
+  }
+  .topbar-titre {
+    font-size: 16px;
+    font-family: sans-serif;
+    color: #2c3e2d;
+    font-weight: bold;
+    white-space: nowrap;
+  }
+  .topbar-page {
+    font-size: 13px;
+    font-family: sans-serif;
+    color: #777;
+    white-space: nowrap;
+  }
+
+  .page-mushaf {
+    border: 2px solid #2c3e2d;
+    border-radius: 6px;
+    background: #fffef8;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 6px 8px;
+    overflow: hidden;
+    touch-action: pan-y;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .ligne-mushaf {
+    text-align: right;
+    white-space: nowrap;
+    margin: 2px 0;
+    width: max-content;
+    max-width: 100%;
+  }
+  .ligne-mushaf.ligne-bismillah {
+    text-align: center;
+    color: #6b8e6d;
+  }
+
+  /* --- Vue liste plate (mode consultation) --- */
+  .verset-wrap {
+    line-height: 2.6;
+    font-size: 24px;
+    text-align: justify;
+  }
+
+  .segment-verset, .verset-btn {
+    position: relative;
+    cursor: pointer;
+    padding: 0 2px;
+    border-radius: 3px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  .segment-verset.survol, .verset-btn:hover {
+    background: #e0e0e0;
+  }
+  .segment-verset.faute, .verset-btn.faute {
+    background-color: transparent;
+    background-image: linear-gradient(rgba(253,234,234,0.95), rgba(253,234,234,0.95));
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 100% 1.1em;
+  }
+  .mot-faute {
+    color: #c0392b;
+    font-weight: bold;
+  }
+
+  .num-verset-mushaf {
+    display: inline-block;
+    font-size: 0.55em;
+    color: #2c3e2d;
+    border: 1px solid #2c3e2d;
+    border-radius: 50%;
+    width: 1.4em;
+    height: 1.4em;
+    line-height: 1.3em;
+    text-align: center;
+    margin: 0 2px;
+    font-family: sans-serif;
+    vertical-align: middle;
+  }
+
+  .tooltip-note {
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    transform: translateY(-8px);
+    background: #2c2c2c;
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 15px;
+    font-family: sans-serif;
+    white-space: normal;
+    max-width: 250px;
+    width: max-content;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  .tooltip-note::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    right: 14px;
+    border: 6px solid transparent;
+    border-top-color: #2c2c2c;
+  }
+  .tooltip-note.hidden {
+    display: none;
+  }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal-overlay.hidden {
+    display: none;
+  }
+  .modal-box {
+    background: white;
+    padding: 20px;
+    border-radius: 10px;
+    width: 90%;
+    max-width: 400px;
+  }
+  .modal-box h3 {
+    margin-top: 0;
+  }
+  .modal-box label {
+    display: block;
+    margin-top: 10px;
+    font-weight: bold;
+  }
+  .modal-box input, .modal-box textarea {
+    width: 100%;
+    padding: 8px;
+    margin-top: 4px;
+    box-sizing: border-box;
+    font-size: 16px;
+    font-family: inherit;
+  }
+  .modal-actions {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .modal-actions button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 15px;
+  }
+  .btn-save {
+    background: #2c3e2d;
+    color: white;
+  }
+  .btn-cancel {
+    background: #ddd;
+  }
+</style>
+</head>
+<body>
+
+<div class="screen" id="screen-menu">
+  <h1>Suivi de récitation</h1>
+  <button class="menu-btn" onclick="ouvrirListeSourates('consultation')">Consulter les erreurs</button>
+  <button class="menu-btn secondaire" onclick="ouvrirListeSourates('entree')">Introduire des nouvelles erreurs</button>
+</div>
+
+<div class="screen hidden" id="screen-liste-sourates">
+  <button class="back-btn" onclick="retourMenu()">← Retour</button>
+  <h1 id="titre-liste"></h1>
+  <div id="liste-sourates"></div>
+</div>
+
+<div class="hidden" id="screen-sourate">
+  <div class="topbar">
+    <button class="back-btn" onclick="retourListeSourates()">← Retour</button>
+    <span class="topbar-titre" id="topbar-titre"></span>
+    <span class="topbar-page" id="page-indic"></span>
+  </div>
+
+  <div id="vue-page" class="hidden" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+    <div class="page-mushaf" id="page-mushaf-contenu"></div>
+  </div>
+
+  <div class="verset-wrap hidden" id="liste-versets" style="overflow-y:auto;"></div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-faute">
+  <div class="modal-box">
+    <h3 id="modal-titre"></h3>
+    <label>Mot fauté</label>
+    <input type="text" id="input-mot" dir="rtl" placeholder="اكتب الكلمة">
+    <label>Note (optionnel)</label>
+    <textarea id="input-note" dir="rtl" rows="3" placeholder="ex: confusion avec verset X"></textarea>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="fermerModal()">Annuler</button>
+      <button class="btn-save" onclick="sauvegarderFaute()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+
+const sourates = [
+  {
+    id: 2,
+    nom: "البقرة",
+    pages: [
+      {
+        num: 1,
+        lignes: [
+          [ {v:0, t:"بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"} ],
+          [ {v:1, t:"الٓمٓ "}, {v:2, t:"ذَٰلِكَ ٱلْكِتَـٰبُ لَا رَيْبَ ۛ فِيهِ ۛ هُدًۭى "} ],
+          [ {v:2, t:"لِّلْمُتَّقِينَ "}, {v:3, t:"ٱلَّذِينَ يُؤْمِنُونَ بِٱلْغَيْبِ وَيُقِيمُونَ ٱلصَّلَوٰةَ "} ],
+          [ {v:3, t:"وَمِمَّا رَزَقْنَـٰهُمْ يُنفِقُونَ "}, {v:4, t:"وَٱلَّذِينَ يُؤْمِنُونَ بِمَآ أُنزِلَ "} ],
+          [ {v:4, t:"إِلَيْكَ وَمَآ أُنزِلَ مِن قَبْلِكَ وَبِٱلْـَٔاخِرَةِ هُمْ يُوقِنُونَ "} ],
+          [ {v:5, t:"أُو۟لَـٰٓئِكَ عَلَىٰ هُدًۭى مِّن رَّبِّهِمْ ۖ وَأُو۟لَـٰٓئِكَ "} ],
+          [ {v:5, t:"هُمُ ٱلْمُفْلِحُونَ "} ],
+        ]
+      },
+      {
+        num: 2,
+        lignes: [
+          [ {v:6, t:"إِنَّ ٱلَّذِينَ كَفَرُوا۟ سَوَآءٌ عَلَيْهِمْ ءَأَنذَرْتَهُمْ أَمْ لَمْ تُنذِرْهُمْ "} ],
+          [ {v:6, t:"لَا يُؤْمِنُونَ "}, {v:7, t:"خَتَمَ ٱللَّهُ عَلَىٰ قُلُوبِهِمْ وَعَلَىٰ سَمْعِهِمْ ۖ وَعَلَىٰٓ "} ],
+          [ {v:7, t:"أَبْصَـٰرِهِمْ غِشَـٰوَةٌۭ ۖ وَلَهُمْ عَذَابٌ عَظِيمٌۭ "}, {v:8, t:"وَمِنَ ٱلنَّاسِ "} ],
+          [ {v:8, t:"مَن يَقُولُ ءَامَنَّا بِٱللَّهِ وَبِٱلْيَوْمِ ٱلْـَٔاخِرِ وَمَا هُم بِمُؤْمِنِينَ "} ],
+          [ {v:9, t:"يُخَـٰدِعُونَ ٱللَّهَ وَٱلَّذِينَ ءَامَنُوا۟ وَمَا يَخْدَعُونَ إِلَّآ أَنفُسَهُمْ "} ],
+          [ {v:9, t:"وَمَا يَشْعُرُونَ "}, {v:10, t:"فِى قُلُوبِهِم مَّرَضٌۭ فَزَادَهُمُ ٱللَّهُ مَرَضًۭا ۖ "} ],
+          [ {v:10, t:"وَلَهُمْ عَذَابٌ أَلِيمٌۢ بِمَا كَانُوا۟ يَكْذِبُونَ "}, {v:11, t:"وَإِذَا قِيلَ لَهُمْ "} ],
+          [ {v:11, t:"لَا تُفْسِدُوا۟ فِى ٱلْأَرْضِ قَالُوٓا۟ إِنَّمَا نَحْنُ مُصْلِحُونَ "} ],
+          [ {v:12, t:"أَلَآ إِنَّهُمْ هُمُ ٱلْمُفْسِدُونَ وَلَـٰكِن لَّا يَشْعُرُونَ "}, {v:13, t:"وَإِذَا قِيلَ "} ],
+          [ {v:13, t:"لَهُمْ ءَامِنُوا۟ كَمَآ ءَامَنَ ٱلنَّاسُ قَالُوٓا۟ أَنُؤْمِنُ كَمَآ ءَامَنَ ٱلسُّفَهَآءُ ۗ "} ],
+          [ {v:13, t:"أَلَآ إِنَّهُمْ هُمُ ٱلسُّفَهَآءُ وَلَـٰكِن لَّا يَعْلَمُونَ "}, {v:14, t:"وَإِذَا لَقُوا۟ "} ],
+          [ {v:14, t:"ٱلَّذِينَ ءَامَنُوا۟ قَالُوٓا۟ ءَامَنَّا وَإِذَا خَلَوْا۟ إِلَىٰ شَيَـٰطِينِهِمْ قَالُوٓا۟ إِنَّا "} ],
+          [ {v:14, t:"مَعَكُمْ إِنَّمَا نَحْنُ مُسْتَهْزِءُونَ "}, {v:15, t:"ٱللَّهُ يَسْتَهْزِئُ بِهِمْ وَيَمُدُّهُمْ "} ],
+          [ {v:15, t:"فِى طُغْيَـٰنِهِمْ يَعْمَهُونَ "}, {v:16, t:"أُو۟لَـٰٓئِكَ ٱلَّذِينَ ٱشْتَرَوُا۟ ٱلضَّلَـٰلَةَ "} ],
+          [ {v:16, t:"بِٱلْهُدَىٰ فَمَا رَبِحَت تِّجَـٰرَتُهُمْ وَمَا كَانُوا۟ مُهْتَدِينَ "} ],
+        ]
+      },
+      {
+        num: 3,
+        lignes: [
+          [ {v:17, t:"مَثَلُهُمْ كَمَثَلِ ٱلَّذِى ٱسْتَوْقَدَ نَارًۭا فَلَمَّآ أَضَآءَتْ مَا حَوْلَهُۥ "} ],
+          [ {v:17, t:"ذَهَبَ ٱللَّهُ بِنُورِهِمْ وَتَرَكَهُمْ فِى ظُلُمَـٰتٍۢ لَّا يُبْصِرُونَ "}, {v:18, t:"صُمٌّۢ "} ],
+          [ {v:18, t:"بُكْمٌ عُمْىٌۭ فَهُمْ لَا يَرْجِعُونَ "}, {v:19, t:"أَوْ كَصَيِّبٍۢ مِّنَ ٱلسَّمَآءِ فِيهِ "} ],
+          [ {v:19, t:"ظُلُمَـٰتٌۭ وَرَعْدٌۭ وَبَرْقٌۭ يَجْعَلُونَ أَصَـٰبِعَهُمْ فِىٓ ءَاذَانِهِم مِّنَ ٱلصَّوَٰعِقِ "} ],
+          [ {v:19, t:"حَذَرَ ٱلْمَوْتِ ۚ وَٱللَّهُ مُحِيطٌۢ بِٱلْكَـٰفِرِينَ "}, {v:20, t:"يَكَادُ ٱلْبَرْقُ يَخْطَفُ "} ],
+          [ {v:20, t:"أَبْصَـٰرَهُمْ ۖ كُلَّمَآ أَضَآءَ لَهُم مَّشَوْا۟ فِيهِ وَإِذَآ أَظْلَمَ عَلَيْهِمْ قَامُوا۟ ۚ "} ],
+          [ {v:20, t:"وَلَوْ شَآءَ ٱللَّهُ لَذَهَبَ بِسَمْعِهِمْ وَأَبْصَـٰرِهِمْ ۚ إِنَّ ٱللَّهَ عَلَىٰ كُلِّ "} ],
+          [ {v:20, t:"شَىْءٍۢ قَدِيرٌۭ "}, {v:21, t:"يَـٰٓأَيُّهَا ٱلنَّاسُ ٱعْبُدُوا۟ رَبَّكُمُ ٱلَّذِى خَلَقَكُمْ "} ],
+          [ {v:21, t:"وَٱلَّذِينَ مِن قَبْلِكُمْ لَعَلَّكُمْ تَتَّقُونَ "}, {v:22, t:"ٱلَّذِى جَعَلَ لَكُمُ "} ],
+          [ {v:22, t:"ٱلْأَرْضَ فِرَٰشًۭا وَٱلسَّمَآءَ بِنَآءًۭ وَأَنزَلَ مِنَ ٱلسَّمَآءِ مَآءًۭ فَأَخْرَجَ "} ],
+          [ {v:22, t:"بِهِۦ مِنَ ٱلثَّمَرَٰتِ رِزْقًۭا لَّكُمْ ۖ فَلَا تَجْعَلُوا۟ لِلَّهِ أَندَادًۭا وَأَنتُمْ "} ],
+          [ {v:22, t:"تَعْلَمُونَ "}, {v:23, t:"وَإِن كُنتُمْ فِى رَيْبٍۢ مِّمَّا نَزَّلْنَا عَلَىٰ عَبْدِنَا "} ],
+          [ {v:23, t:"فَأْتُوا۟ بِسُورَةٍۢ مِّن مِّثْلِهِۦ وَٱدْعُوا۟ شُهَدَآءَكُم مِّن دُونِ ٱللَّهِ "} ],
+          [ {v:23, t:"إِن كُنتُمْ صَـٰدِقِينَ "}, {v:24, t:"فَإِن لَّمْ تَفْعَلُوا۟ وَلَن تَفْعَلُوا۟ فَٱتَّقُوا۟ "} ],
+          [ {v:24, t:"ٱلنَّارَ ٱلَّتِى وَقُودُهَا ٱلنَّاسُ وَٱلْحِجَارَةُ ۖ أُعِدَّتْ لِلْكَـٰفِرِينَ "} ],
+        ]
+      },
+    ]
+  },
+  {
+    id: 3,
+    nom: "آل عمران",
+    pages: [
+      {
+        num: 1,
+        lignes: [
+          [ {v:0, t:"بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"} ],
+          [ {v:1, t:"الٓمٓ "}, {v:2, t:"ٱللَّهُ لَآ إِلَـٰهَ إِلَّا هُوَ ٱلْحَىُّ ٱلْقَيُّومُ "}, {v:3, t:"نَزَّلَ عَلَيْكَ ٱلْكِتَـٰبَ "} ],
+          [ {v:3, t:"بِٱلْحَقِّ مُصَدِّقًۭا لِّمَا بَيْنَ يَدَيْهِ وَأَنزَلَ ٱلتَّوْرَىٰةَ وَٱلْإِنجِيلَ "}, {v:4, t:"مِن "} ],
+          [ {v:4, t:"قَبْلُ هُدًۭى لِّلنَّاسِ وَأَنزَلَ ٱلْفُرْقَانَ ۗ إِنَّ ٱلَّذِينَ كَفَرُوا۟ بِـَٔايَـٰتِ ٱللَّهِ لَهُمْ "} ],
+          [ {v:4, t:"عَذَابٌۭ شَدِيدٌۭ ۗ وَٱللَّهُ عَزِيزٌۭ ذُو ٱنتِقَامٍ "}, {v:5, t:"إِنَّ ٱللَّهَ لَا يَخْفَىٰ عَلَيْهِ "} ],
+          [ {v:5, t:"شَىْءٌۭ فِى ٱلْأَرْضِ وَلَا فِى ٱلسَّمَآءِ "}, {v:6, t:"هُوَ ٱلَّذِى يُصَوِّرُكُمْ "} ],
+          [ {v:6, t:"فِى ٱلْأَرْحَامِ كَيْفَ يَشَآءُ ۚ لَآ إِلَـٰهَ إِلَّا هُوَ ٱلْعَزِيزُ ٱلْحَكِيمُ "}, {v:7, t:"هُوَ "} ],
+          [ {v:7, t:"ٱلَّذِىٓ أَنزَلَ عَلَيْكَ ٱلْكِتَـٰبَ مِنْهُ ءَايَـٰتٌۭ مُّحْكَمَـٰتٌ هُنَّ أُمُّ ٱلْكِتَـٰبِ "} ],
+          [ {v:7, t:"وَأُخَرُ مُتَشَـٰبِهَـٰتٌۭ ۖ فَأَمَّا ٱلَّذِينَ فِى قُلُوبِهِمْ زَيْغٌۭ فَيَتَّبِعُونَ مَا تَشَـٰبَهَ "} ],
+          [ {v:7, t:"مِنْهُ ٱبْتِغَآءَ ٱلْفِتْنَةِ وَٱبْتِغَآءَ تَأْوِيلِهِۦ ۗ وَمَا يَعْلَمُ تَأْوِيلَهُۥٓ إِلَّا ٱللَّهُ ۗ "} ],
+          [ {v:7, t:"وَٱلرَّٰسِخُونَ فِى ٱلْعِلْمِ يَقُولُونَ ءَامَنَّا بِهِۦ كُلٌّۭ مِّنْ عِندِ رَبِّنَا ۗ وَمَا يَذَّكَّرُ "} ],
+          [ {v:7, t:"إِلَّآ أُو۟لُوا۟ ٱلْأَلْبَـٰبِ "}, {v:8, t:"رَبَّنَا لَا تُزِغْ قُلُوبَنَا بَعْدَ إِذْ هَدَيْتَنَا وَهَبْ "} ],
+          [ {v:8, t:"لَنَا مِن لَّدُنكَ رَحْمَةً ۚ إِنَّكَ أَنتَ ٱلْوَهَّابُ "}, {v:9, t:"رَبَّنَآ إِنَّكَ جَامِعُ "} ],
+          [ {v:9, t:"ٱلنَّاسِ لِيَوْمٍۢ لَّا رَيْبَ فِيهِ ۚ إِنَّ ٱللَّهَ لَا يُخْلِفُ ٱلْمِيعَادَ "} ],
+        ]
+      },
+      {
+        num: 2,
+        lignes: [
+          [ {v:10, t:"إِنَّ ٱلَّذِينَ كَفَرُوا۟ لَن تُغْنِىَ عَنْهُمْ أَمْوَٰلُهُمْ وَلَآ أَوْلَـٰدُهُم "} ],
+          [ {v:10, t:"مِّنَ ٱللَّهِ شَيْـًۭٔا ۖ وَأُو۟لَـٰٓئِكَ هُمْ وَقُودُ ٱلنَّارِ "}, {v:11, t:"كَدَأْبِ ءَالِ "} ],
+          [ {v:11, t:"فِرْعَوْنَ وَٱلَّذِينَ مِن قَبْلِهِمْ ۚ كَذَّبُوا۟ بِـَٔايَـٰتِنَا فَأَخَذَهُمُ ٱللَّهُ بِذُنُوبِهِمْ ۗ "} ],
+          [ {v:11, t:"وَٱللَّهُ شَدِيدُ ٱلْعِقَابِ "}, {v:12, t:"قُل لِّلَّذِينَ كَفَرُوا۟ سَتُغْلَبُونَ "} ],
+          [ {v:12, t:"وَتُحْشَرُونَ إِلَىٰ جَهَنَّمَ ۚ وَبِئْسَ ٱلْمِهَادُ "}, {v:13, t:"قَدْ كَانَ "} ],
+          [ {v:13, t:"لَكُمْ ءَايَةٌۭ فِى فِئَتَيْنِ ٱلْتَقَتَا ۖ فِئَةٌۭ تُقَـٰتِلُ فِى سَبِيلِ ٱللَّهِ "} ],
+          [ {v:13, t:"وَأُخْرَىٰ كَافِرَةٌۭ يَرَوْنَهُم مِّثْلَيْهِمْ رَأْىَ ٱلْعَيْنِ ۚ وَٱللَّهُ "} ],
+          [ {v:13, t:"يُؤَيِّدُ بِنَصْرِهِۦ مَن يَشَآءُ ۗ إِنَّ فِى ذَٰلِكَ لَعِبْرَةًۭ لِّأُو۟لِى "} ],
+          [ {v:13, t:"ٱلْأَبْصَـٰرِ "}, {v:14, t:"زُيِّنَ لِلنَّاسِ حُبُّ ٱلشَّهَوَٰتِ مِنَ ٱلنِّسَآءِ "} ],
+          [ {v:14, t:"وَٱلْبَنِينَ وَٱلْقَنَـٰطِيرِ ٱلْمُقَنطَرَةِ مِنَ ٱلذَّهَبِ وَٱلْفِضَّةِ "} ],
+          [ {v:14, t:"وَٱلْخَيْلِ ٱلْمُسَوَّمَةِ وَٱلْأَنْعَـٰمِ وَٱلْحَرْثِ ۗ ذَٰلِكَ مَتَـٰعُ "} ],
+          [ {v:14, t:"ٱلْحَيَوٰةِ ٱلدُّنْيَا ۖ وَٱللَّهُ عِندَهُۥ حُسْنُ ٱلْمَـَٔابِ "}, {v:15, t:"۞ قُلْ "} ],
+          [ {v:15, t:"أَؤُنَبِّئُكُم بِخَيْرٍۢ مِّن ذَٰلِكُمْ ۚ لِلَّذِينَ ٱتَّقَوْا۟ عِندَ رَبِّهِمْ جَنَّـٰتٌۭ "} ],
+          [ {v:15, t:"تَجْرِى مِن تَحْتِهَا ٱلْأَنْهَـٰرُ خَـٰلِدِينَ فِيهَا وَأَزْوَٰجٌۭ مُّطَهَّرَةٌۭ "} ],
+          [ {v:15, t:"وَرِضْوَٰنٌۭ مِّنَ ٱللَّهِ ۗ وَٱللَّهُ بَصِيرٌۢ بِٱلْعِبَادِ "} ],
+        ]
+      },
+    ]
+  }
+];
+// ---- ÉTAT ----
+let sourateActuelle = null;
+let versetActuel = null;
+let modeActuel = 'entree';
+let pageActuelleIndex = 0;
+let fautes = {};
+
+// ---- STOCKAGE PERSISTANT ----
+function chargerFautes() {
+  const data = localStorage.getItem('fautes_recitation');
+  if (data) {
+    try { fautes = JSON.parse(data); } catch (e) { fautes = {}; }
+  }
+}
+function sauvegarderDansStockage() {
+  localStorage.setItem('fautes_recitation', JSON.stringify(fautes));
+}
+
+// ---- NAVIGATION MENU ----
+function retourMenu() {
+  document.getElementById('screen-liste-sourates').classList.add('hidden');
+  document.getElementById('screen-menu').classList.remove('hidden');
+}
+
+// ---- LISTE DES SOURATES ----
+function ouvrirListeSourates(mode) {
+  modeActuel = mode;
+  document.getElementById('titre-liste').textContent =
+    mode === 'consultation' ? 'Consulter les erreurs' : 'Choisir une sourate';
+
+  const conteneur = document.getElementById('liste-sourates');
+  conteneur.innerHTML = '';
+
+  let souratesAffichees = sourates;
+  if (mode === 'consultation') {
+    souratesAffichees = sourates.filter(function(s) { return sourateAUneFaute(s.id); });
+  }
+
+  if (souratesAffichees.length === 0) {
+    conteneur.innerHTML = '<div class="vide-msg">Aucune erreur enregistrée pour l\'instant.</div>';
+  } else {
+    souratesAffichees.forEach(function(s) {
+      const btn = document.createElement('button');
+      btn.className = 'sourate-btn';
+      btn.textContent = s.id + ' - سورة ' + s.nom;
+      btn.onclick = function() { ouvrirSourate(s.id); };
+      conteneur.appendChild(btn);
+    });
+  }
+
+  document.getElementById('screen-menu').classList.add('hidden');
+  document.getElementById('screen-liste-sourates').classList.remove('hidden');
+}
+
+function sourateAUneFaute(sourateId) {
+  return Object.keys(fautes).some(function(cle) { return cle.split(':')[0] == sourateId; });
+}
+
+function retourListeSourates() {
+  document.getElementById('screen-sourate').classList.add('hidden');
+  document.getElementById('screen-liste-sourates').classList.remove('hidden');
+}
+
+// ---- OUVERTURE D'UNE SOURATE ----
+function ouvrirSourate(sourateId) {
+  sourateActuelle = sourates.find(function(s) { return s.id === sourateId; });
+  document.getElementById('topbar-titre').textContent = 'سورة ' + sourateActuelle.nom;
+  pageActuelleIndex = 0;
+
+  // on affiche d'abord l'écran (dimensions réelles disponibles ensuite)
+  document.getElementById('screen-liste-sourates').classList.add('hidden');
+  document.getElementById('screen-sourate').classList.remove('hidden');
+
+  const vuePage = document.getElementById('vue-page');
+  const listeVersets = document.getElementById('liste-versets');
+
+  if (modeActuel === 'entree') {
+    vuePage.classList.remove('hidden');
+    listeVersets.classList.add('hidden');
+    afficherPage();
+  } else {
+    vuePage.classList.add('hidden');
+    listeVersets.classList.remove('hidden');
+    document.getElementById('page-indic').textContent = '';
+    afficherListePlate();
+  }
+}
+
+// ---- VUE PAGINÉE (mode entrée) ----
+function afficherPage() {
+  const page = sourateActuelle.pages[pageActuelleIndex];
+  const conteneur = document.getElementById('page-mushaf-contenu');
+  conteneur.innerHTML = '';
+
+  const segmentsAplatis = [];
+  page.lignes.forEach(function(ligne, ligneIndex) {
+    ligne.forEach(function(segment) {
+      segmentsAplatis.push({ ligneIndex: ligneIndex, v: segment.v });
+    });
+  });
+
+  const dernierIndexParVerset = {};
+  segmentsAplatis.forEach(function(seg, idx) {
+    dernierIndexParVerset[seg.v] = idx;
+  });
+
+  let compteurGlobal = 0;
+
+  page.lignes.forEach(function(ligne) {
+    const estBismillah = ligne.length === 1 && ligne[0].v === 0;
+
+    const div = document.createElement('div');
+    div.className = 'ligne-mushaf' + (estBismillah ? ' ligne-bismillah' : '');
+
+    ligne.forEach(function(segment) {
+      const indexActuel = compteurGlobal;
+      compteurGlobal++;
+
+      if (segment.v === 0) {
+        // Basmala : texte simple, non cliquable, pas de faute possible
+        div.appendChild(document.createTextNode(segment.t));
+        return;
+      }
+
+      const cle = sourateActuelle.id + ':' + segment.v;
+      const existant = fautes[cle];
+
+      const span = document.createElement('span');
+      span.className = 'segment-verset' + (existant ? ' faute' : '');
+      span.setAttribute('data-verset', segment.v);
+      span.innerHTML = existant && existant.mot ? mettreMotEnRouge(segment.t, existant.mot) : segment.t;
+      span.onclick = function() { ouvrirModal(segment.v); };
+      span.onmouseenter = function() { survolerVerset(segment.v, true); };
+      span.onmouseleave = function() { survolerVerset(segment.v, false); };
+      div.appendChild(span);
+
+      if (dernierIndexParVerset[segment.v] === indexActuel) {
+        const numSpan = document.createElement('span');
+        numSpan.className = 'num-verset-mushaf';
+        numSpan.textContent = segment.v;
+        div.appendChild(numSpan);
+      }
+    });
+
+    conteneur.appendChild(div);
+  });
+
+  document.getElementById('page-indic').textContent =
+    (pageActuelleIndex + 1) + ' / ' + sourateActuelle.pages.length;
+
+  document.fonts.ready.then(function() {
+    ajusterTaillePage();
+  });
+}
+
+// ---- AJUSTEMENT : UNE SEULE taille pour toute la page + tatwil pour les lignes courtes ----
+const NON_CONNECTEURS = new Set(['ا','أ','إ','آ','ٱ','د','ذ','ر','ز','و','ؤ','ء']);
+// paires de lettres consécutives où le tatwil est interdit même si la 1ère
+// lettre se lie normalement vers l'avant (ligatures obligatoires / graphèmes composés)
+const ALIF_VARIANTES = new Set(['ا','أ','إ','آ','ٱ']);
+const PAIRES_TATWIL_INTERDITES = [
+  // لا : ligature obligatoire lam-alif, jamais de tatwil entre les deux lettres
+  function(actuel, suivant) { return actuel === 'ل' && ALIF_VARIANTES.has(suivant); },
+  // ء + ا (ex: ءَامَنُوا۟) : le hamza et l'alif forment un même repère graphique,
+  // les séparer par un tatwil déforme le mot
+  function(actuel, suivant) { return actuel === 'ء' && ALIF_VARIANTES.has(suivant); },
+];
+const DIACRITIQUES_RE_TATWIL = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DE-\u06E8\u06EA-\u06ED]/;
+
+function estDiacritiqueTatwil(c) {
+  return DIACRITIQUES_RE_TATWIL.test(c);
+}
+
+function recupererTextNodes(element) {
+  let nodes = [];
+  element.childNodes.forEach(function(n) {
+    if (n.nodeType === Node.TEXT_NODE) {
+      nodes.push(n);
+    } else if (n.nodeType === Node.ELEMENT_NODE && !n.classList.contains('num-verset-mushaf')) {
+      nodes = nodes.concat(recupererTextNodes(n));
+    }
+  });
+  return nodes;
+}
+
+function pointsEligiblesTatwil(ligneDiv) {
+  const points = [];
+  const textNodes = recupererTextNodes(ligneDiv);
+  textNodes.forEach(function(node, indexNoeud) {
+    const texte = node.textContent;
+
+    // 1. découper le texte en "blocs" = une lettre de base + ses diacritiques qui suivent
+    //    on repère aussi le numéro du mot (séparé par des espaces) auquel appartient chaque bloc
+    const clusters = [];
+    let i = 0;
+    let numeroMot = -1;
+    let dansUnMot = false;
+    while (i < texte.length) {
+      if (texte[i] === ' ') { i++; dansUnMot = false; continue; }
+      if (!dansUnMot) { numeroMot++; dansUnMot = true; }
+      const base = texte[i];
+      const debut = i;
+      i++;
+      while (i < texte.length && estDiacritiqueTatwil(texte[i])) i++;
+      clusters.push({ debut: debut, fin: i, base: base, mot: numeroMot });
+    }
+
+    // 2. chercher les frontières entre 2 blocs consécutifs du MÊME mot (rien entre les deux, pas d'espace)
+    for (let c = 0; c < clusters.length - 1; c++) {
+      const actuel = clusters[c];
+      const suivant = clusters[c + 1];
+      const entreDeux = texte.slice(actuel.fin, suivant.debut);
+      if (entreDeux.length > 0) continue; // espace ou autre : mot différent, on saute
+      if (NON_CONNECTEURS.has(actuel.base)) continue;
+      // on autorise désormais d'empiler plusieurs tatwils au même endroit
+      // (un mot avec un seul point de liaison doit pouvoir recevoir tout
+      // l'allongement nécessaire, pas seulement un tatwil unique)
+      // on évite de séparer une paire de lettres formant une ligature obligatoire
+      // ou un graphème composé (ex: لا, ء+ا dans ءَامَنُوا۟)
+      if (PAIRES_TATWIL_INTERDITES.some(function(regle) { return regle(actuel.base, suivant.base); })) continue;
+      points.push({ node: node, index: actuel.fin, motId: indexNoeud + '-' + actuel.mot });
+    }
+  });
+  return points;
+}
+
+function ajouterTatwil(ligneDiv, largeurDispo) {
+  const margeSecurite = 3;
+  let tentatives = 0;
+  const maxTentatives = 200;
+
+  // compteur d'insertions déjà faites, par mot (motId) : sert à répartir
+  // l'allongement sur plusieurs mots au lieu de déformer toujours le même
+  const compteParMot = {};
+
+  while (ligneDiv.scrollWidth < largeurDispo - margeSecurite && tentatives < maxTentatives) {
+    tentatives++;
+    const points = pointsEligiblesTatwil(ligneDiv);
+    if (points.length === 0) break;
+
+    // on choisit le point dont le mot a reçu le MOINS de tatwils jusqu'ici ;
+    // tant que des mots n'ont encore rien reçu, on les priorise (répartition
+    // façon "tour par tour" entre les mots de la ligne)
+    let choix = null;
+    let meilleurCompte = Infinity;
+    for (let p = 0; p < points.length; p++) {
+      const compte = compteParMot[points[p].motId] || 0;
+      if (compte < meilleurCompte) {
+        meilleurCompte = compte;
+        choix = points[p];
+      }
+    }
+    if (!choix) break;
+
+    const texte = choix.node.textContent;
+    choix.node.textContent = texte.slice(0, choix.index) + 'ـ' + texte.slice(choix.index);
+    compteParMot[choix.motId] = (compteParMot[choix.motId] || 0) + 1;
+
+    if (ligneDiv.scrollWidth > largeurDispo) {
+      // trop loin : on retire ce dernier tatwil et on s'arrête
+      const texteApres = choix.node.textContent;
+      choix.node.textContent = texteApres.slice(0, choix.index) + texteApres.slice(choix.index + 1);
+      compteParMot[choix.motId] -= 1;
+      break;
+    }
+  }
+}
+
+function ajusterTaillePage() {
+  const conteneur = document.getElementById('page-mushaf-contenu');
+  const lignes = Array.from(conteneur.querySelectorAll('.ligne-mushaf'));
+  if (lignes.length === 0) return;
+
+  const hauteurDispo = conteneur.clientHeight - 4;
+  const largeurDispo = conteneur.clientWidth - 6;
+
+  const budgetParLigne = hauteurDispo / lignes.length;
+  let taille = Math.floor(budgetParLigne / 1.75);
+  taille = Math.max(9, Math.min(taille, 32));
+
+  function appliquerTaille(t) {
+    lignes.forEach(function(ligne) {
+      ligne.style.fontSize = t + 'px';
+      ligne.style.lineHeight = (t * 1.75) + 'px';
+    });
+  }
+
+  function ligneLaPlusLarge() {
+    let max = 0;
+    lignes.forEach(function(l) { if (l.scrollWidth > max) max = l.scrollWidth; });
+    return max;
+  }
+
+  appliquerTaille(taille);
+  while (ligneLaPlusLarge() > largeurDispo && taille > 8) {
+    taille -= 0.5;
+    appliquerTaille(taille);
+  }
+
+  // toutes les lignes ont maintenant LA MÊME taille ; on comble les lignes courtes avec du tatwil
+  lignes.forEach(function(ligne) {
+    if (ligne.classList.contains('ligne-bismillah')) return;
+    if (ligne.scrollWidth < largeurDispo - 15) {
+      ajouterTatwil(ligne, largeurDispo);
+    }
+  });
+}
+
+function survolerVerset(versetNum, actif) {
+  const segments = document.querySelectorAll('.segment-verset[data-verset="' + versetNum + '"]');
+  segments.forEach(function(seg) {
+    if (actif) {
+      seg.classList.add('survol');
+    } else {
+      seg.classList.remove('survol');
+    }
+  });
+}
+
+function changerPage(direction) {
+  const nouvelleIndex = pageActuelleIndex + direction;
+  if (nouvelleIndex < 0 || nouvelleIndex >= sourateActuelle.pages.length) return;
+  pageActuelleIndex = nouvelleIndex;
+  afficherPage();
+}
+
+// ---- NAVIGATION TACTILE (swipe) ----
+(function() {
+  let xDepart = null;
+  const zone = document.getElementById('page-mushaf-contenu');
+
+  zone.addEventListener('touchstart', function(e) {
+    xDepart = e.touches[0].clientX;
+  }, { passive: true });
+
+  zone.addEventListener('touchend', function(e) {
+    if (xDepart === null) return;
+    const xFin = e.changedTouches[0].clientX;
+    const delta = xFin - xDepart;
+    xDepart = null;
+    if (Math.abs(delta) < 40) return; // pas un vrai swipe
+    if (delta < 0) {
+      changerPage(1);  // swipe vers la gauche -> page suivante
+    } else {
+      changerPage(-1); // swipe vers la droite -> page précédente
+    }
+  }, { passive: true });
+})();
+
+window.addEventListener('resize', function() {
+  if (sourateActuelle && modeActuel === 'entree' && !document.getElementById('screen-sourate').classList.contains('hidden')) {
+    ajusterTaillePage();
+  }
+});
+
+// ---- VUE LISTE PLATE (mode consultation) ----
+function afficherListePlate() {
+  const conteneur = document.getElementById('liste-versets');
+  conteneur.innerHTML = '';
+
+  const versetsFautes = Object.keys(fautes)
+    .filter(function(cle) { return cle.split(':')[0] == sourateActuelle.id; })
+    .map(function(cle) { return parseInt(cle.split(':')[1]); })
+    .sort(function(a, b) { return a - b; });
+
+  if (versetsFautes.length === 0) {
+    conteneur.innerHTML = '<div class="vide-msg">Aucune erreur enregistrée pour cette sourate.</div>';
+    return;
+  }
+
+  versetsFautes.forEach(function(versetNum) {
+    const cle = sourateActuelle.id + ':' + versetNum;
+    const existant = fautes[cle];
+    const texte = texteDuVerset(sourateActuelle, versetNum);
+
+    const span = document.createElement('span');
+    span.className = 'verset-btn faute';
+    span.innerHTML = existant.mot ? mettreMotEnRouge(texte, existant.mot) : texte;
+    span.onclick = function() { toggleNote(cle); };
+
+    if (existant) {
+      const tooltip = document.createElement('span');
+      tooltip.className = 'tooltip-note hidden';
+      tooltip.id = 'note-' + cle;
+      tooltip.textContent = existant.note ? existant.note : '(aucune note)';
+      span.appendChild(tooltip);
+    }
+    conteneur.appendChild(span);
+
+    const numSpan = document.createElement('span');
+    numSpan.className = 'num-verset-mushaf';
+    numSpan.textContent = versetNum;
+    conteneur.appendChild(numSpan);
+    conteneur.appendChild(document.createTextNode(' '));
+  });
+}
+
+function texteDuVerset(sourate, versetNum) {
+  let texte = '';
+  sourate.pages.forEach(function(page) {
+    page.lignes.forEach(function(ligne) {
+      ligne.forEach(function(segment) {
+        if (segment.v === versetNum) texte += segment.t;
+      });
+    });
+  });
+  return texte;
+}
+
+function toggleNote(cle) {
+  document.getElementById('note-' + cle).classList.toggle('hidden');
+}
+
+// ---- MISE EN ROUGE DU MOT FAUTÉ (normalise diacritiques + variantes de lettres) ----
+function mettreMotEnRouge(texte, mot) {
+  const A_IGNORER = /[\u0610-\u061A\u064B-\u065F\u0670\u0640\u06D6-\u06DC\u06DE-\u06E8\u06EA-\u06ED]/;
+
+  function normaliserLettre(c) {
+    if ('أإآٱ'.includes(c)) return 'ا';
+    if (c === 'ى') return 'ي';
+    if (c === 'ة') return 'ه';
+    if (c === 'ؤ') return 'و';
+    if (c === 'ئ') return 'ي';
+    return c;
+  }
+
+  let texteNormalise = '';
+  const correspondance = [];
+  for (let i = 0; i < texte.length; i++) {
+    if (!A_IGNORER.test(texte[i])) {
+      texteNormalise += normaliserLettre(texte[i]);
+      correspondance.push(i);
+    }
+  }
+
+  let motNormalise = '';
+  for (let i = 0; i < mot.length; i++) {
+    if (!A_IGNORER.test(mot[i])) {
+      motNormalise += normaliserLettre(mot[i]);
+    }
+  }
+
+  const position = texteNormalise.indexOf(motNormalise);
+  if (position === -1) return texte;
+
+  const debutOriginal = correspondance[position];
+  const finOriginal = correspondance[position + motNormalise.length - 1] + 1;
+
+  return texte.substring(0, debutOriginal) +
+         '<span class="mot-faute">' + texte.substring(debutOriginal, finOriginal) + '</span>' +
+         texte.substring(finOriginal);
+}
+
+// ---- MODAL FAUTE ----
+function ouvrirModal(versetNum) {
+  versetActuel = versetNum;
+  const cle = sourateActuelle.id + ':' + versetNum;
+  const existant = fautes[cle];
+
+  document.getElementById('modal-titre').textContent =
+    'سورة ' + sourateActuelle.nom + ' - verset ' + versetNum + (existant ? ' (modification)' : '');
+
+  document.getElementById('input-mot').value = existant ? existant.mot : '';
+  document.getElementById('input-note').value = existant ? existant.note : '';
+
+  document.getElementById('modal-faute').classList.remove('hidden');
+}
+
+function fermerModal() {
+  document.getElementById('modal-faute').classList.add('hidden');
+}
+
+function sauvegarderFaute() {
+  const mot = document.getElementById('input-mot').value.trim();
+  const note = document.getElementById('input-note').value.trim();
+  if (!mot) {
+    alert('Merci de préciser le mot fauté.');
+    return;
+  }
+  const cle = sourateActuelle.id + ':' + versetActuel;
+
+  fautes[cle] = { mot: mot, note: note, date: new Date().toISOString() };
+
+  sauvegarderDansStockage();
+  fermerModal();
+  afficherPage();
+}
+
+// ---- INITIALISATION ----
+chargerFautes();
+
+</script>
+</body>
+</html>
