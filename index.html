@@ -1225,10 +1225,25 @@ function gererFinReconnaissance() {
   }
 }
 
+// Détecte si on tourne dans l'app compilée (Capacitor) plutôt que dans un
+// navigateur classique. À l'intérieur de l'APK, webkitSpeechRecognition
+// existe comme objet JS dans la WebView mais n'est PAS fiable sur beaucoup
+// d'appareils (elle démarre puis échoue en boucle en quelques centaines de
+// ms, ce qui donnait l'impression que le micro "s'ouvrait puis se fermait").
+// On force donc le plugin natif Capacitor dès qu'on est dans l'app, et on ne
+// réserve l'API navigateur qu'aux tests en dehors de l'APK (Chrome desktop/mobile).
+function estNatif() {
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+
 async function demarrerEcoute() {
+  if (estNatif()) {
+    await demarrerEcouteNative();
+    return;
+  }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
-    demarrerEcouteNative();
+    await demarrerEcouteNative();
     return;
   }
   interimTexteCourant = '';
@@ -1255,35 +1270,66 @@ async function demarrerEcoute() {
   document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
 }
 
-// ---- Repli sur le plugin natif Capacitor (si l'API navigateur est absente) ----
+// ---- Plugin natif Capacitor (utilisé PAR DÉFAUT dans l'APK) ----
+let derniersMotsNatifsEnvoyes = 0;
+
 async function demarrerEcouteNative() {
   const SRPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition;
   if (!SRPlugin) {
     alert("La reconnaissance vocale n'est pas disponible sur cet appareil.");
     return;
   }
-  try { await SRPlugin.requestPermission(); } catch (e) {}
-  if (window._recitationListener) { try { window._recitationListener.remove(); } catch (e) {} }
+
+  try {
+    const dispo = await SRPlugin.available();
+    if (dispo && dispo.available === false) {
+      alert('Reconnaissance vocale non disponible sur cet appareil.');
+      return;
+    }
+    // API v6 du plugin : checkPermissions()/requestPermissions() (au pluriel).
+    const perm = await SRPlugin.checkPermissions();
+    if (perm.speechRecognition !== 'granted') {
+      const demande = await SRPlugin.requestPermissions();
+      if (demande.speechRecognition !== 'granted') {
+        alert("Permission micro refusée. Active-la dans les réglages de l'application (Paramètres → Applications → Suivi Recitation → Autorisations).");
+        document.getElementById('btn-toggle-ecoute').textContent = "🎙️ Démarrer l'écoute";
+        document.getElementById('statut-ecoute').textContent = 'Micro refusé';
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn('Erreur vérification permissions micro natif', e);
+  }
+
   ecouteActive = true;
+  derniersMotsNatifsEnvoyes = 0;
+
+  if (window._recitationListener) { try { window._recitationListener.remove(); } catch (e) {} window._recitationListener = null; }
+
   try {
     window._recitationListener = await SRPlugin.addListener('partialResults', function(data) {
       reinitialiserTimerSilence();
-      const txt = (data.matches && data.matches[0]) ? data.matches[0] : '';
+      const txt = (data && data.matches && data.matches[0]) ? data.matches[0] : '';
       const mots = txt.trim().split(/\s+/).filter(Boolean);
-      // Le plugin natif ne distingue pas final/interim mot à mot : on ne
-      // traite que le DERNIER mot de chaque paquet pour éviter les doublons,
-      // les mots précédents ayant déjà été consommés au paquet précédent.
-      if (mots.length) traiterMotEntendu(mots[mots.length - 1]);
+      // Le plugin renvoie la transcription COMPLÈTE de l'énoncé en cours à
+      // chaque appel (pas mot par mot comme le moteur navigateur) : on ne
+      // traite que les mots NOUVEAUX par rapport au dernier appel.
+      if (mots.length > derniersMotsNatifsEnvoyes) {
+        mots.slice(derniersMotsNatifsEnvoyes).forEach(traiterMotEntendu);
+        derniersMotsNatifsEnvoyes = mots.length;
+      }
     });
-    await SRPlugin.start({ language: 'ar-SA', partialResults: true, popup: false });
-    document.getElementById('btn-toggle-ecoute').textContent = '⏸️ Pause';
-    document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
+    await SRPlugin.start({ language: 'ar-SA', partialResults: true, popup: false, maxResults: 1 });
   } catch (e) {
     alert('Erreur au démarrage de la reconnaissance native : ' + (e.message || e));
     document.getElementById('btn-toggle-ecoute').textContent = "🎙️ Démarrer l'écoute";
     document.getElementById('statut-ecoute').textContent = 'Micro indisponible';
+    ecouteActive = false;
     return;
   }
+
+  document.getElementById('btn-toggle-ecoute').textContent = '⏸️ Pause';
+  document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
   reinitialiserTimerSilence();
 }
 
