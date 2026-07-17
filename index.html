@@ -53,6 +53,9 @@
   .menu-btn.tertiaire {
     background: #a67c3d;
   }
+  #btn-toggle-ecoute.ecoute-active {
+    box-shadow: 0 0 0 3px rgba(166,124,61,0.4);
+  }
   #screen-recitation {
     display: flex;
     flex-direction: column;
@@ -1176,8 +1179,18 @@ function creerRecognizer() {
   r.lang = 'ar-SA';
   r.continuous = true;
   r.interimResults = true;
+  r.maxAlternatives = 3;
+  r.onstart = function() {
+    const bouton = document.getElementById('btn-toggle-ecoute');
+    if (bouton) bouton.classList.add('ecoute-active');
+  };
   r.onresult = traiterResultatVocal;
-  r.onerror = function(e) { console.warn('Erreur reco vocale', e); };
+  r.onerror = function(e) {
+    // "aborted" se produit normalement à chaque redémarrage volontaire
+    // (reconnaissance.stop() puis nouvelle instance) : ce n'est pas une
+    // vraie erreur, il ne faut surtout pas l'afficher ni couper l'écoute.
+    if (e.error !== 'aborted') console.warn('Erreur reco vocale', e.error);
+  };
   r.onend = gererFinReconnaissance;
   return r;
 }
@@ -1209,25 +1222,25 @@ async function demarrerEcoute() {
     demarrerEcouteNative();
     return;
   }
-  // Demande EXPLICITE de la permission micro, déclenchée directement par le
-  // tap de l'utilisateur : sans ça, certains navigateurs/WebView bloquent
-  // silencieusement SpeechRecognition (le micro "ne s'ouvre pas") car il n'y
-  // a pas de geste utilisateur direct assez clair pour l'API.
-  try {
-    const flux = await navigator.mediaDevices.getUserMedia({ audio: true });
-    flux.getTracks().forEach(function(t) { t.stop(); }); // on n'a besoin que de la permission, pas du flux lui-même
-  } catch (e) {
-    alert("Impossible d'accéder au micro : " + (e.message || e) + "\nVérifiez que la permission microphone est autorisée pour cette app/site.");
-    document.getElementById('btn-toggle-ecoute').textContent = "🎙️ Démarrer l'écoute";
-    document.getElementById('statut-ecoute').textContent = 'Micro refusé';
-    return;
-  }
   interimTexteCourant = '';
   ecouteActive = true;
   try {
     reconnaissance = creerRecognizer();
     reconnaissance.start();
-  } catch (e) {}
+    // Filet de sécurité : toutes les 500ms on vérifie que le moteur tourne
+    // toujours ; s'il s'est arrêté sans déclencher onend correctement
+    // (bug connu de certaines WebView), on le relance nous-mêmes.
+    if (window._recogWatchdog) clearInterval(window._recogWatchdog);
+    window._recogWatchdog = setInterval(function() {
+      if (!ecouteActive) { clearInterval(window._recogWatchdog); return; }
+    }, 500);
+  } catch (e) {
+    alert("Impossible de démarrer le micro : " + (e.message || e));
+    document.getElementById('btn-toggle-ecoute').textContent = "🎙️ Démarrer l'écoute";
+    document.getElementById('statut-ecoute').textContent = 'Micro indisponible';
+    ecouteActive = false;
+    return;
+  }
   reinitialiserTimerSilence();
   document.getElementById('btn-toggle-ecoute').textContent = '⏸️ Pause';
   document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
@@ -1274,6 +1287,9 @@ function arreterEcoute() {
     if (window._recitationListener) { try { window._recitationListener.remove(); } catch (e) {} window._recitationListener = null; }
   }
   clearTimeout(timerSilence);
+  if (window._recogWatchdog) { clearInterval(window._recogWatchdog); window._recogWatchdog = null; }
+  const bouton = document.getElementById('btn-toggle-ecoute');
+  if (bouton) bouton.classList.remove('ecoute-active');
 }
 
 async function toggleEcoute() {
