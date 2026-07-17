@@ -55,7 +55,7 @@ jobs:
           mkdir -p www
           cp index.html www/
           echo '{"name":"suivi-recitation","version":"1.0.0","private":true}' > package.json
-          npm install @capacitor/core@5 @capacitor/cli@5 @capacitor/android@5
+          npm install @capacitor/core@5 @capacitor/cli@5 @capacitor/android@5 @capacitor-community/speech-recognition@5
           python3 -c "import json; open('capacitor.config.json','w').write(json.dumps({'appId':'com.suivirecitation.fautes','appName':'Suivi Recitation','webDir':'www','androidScheme':'https','android':{'allowMixedContent':True}}, indent=2))"
           npx cap add android
           npx cap sync android
@@ -64,6 +64,33 @@ jobs:
           GRADLE_FILE="android/app/build.gradle"
           sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" "$GRADLE_FILE"
           sed -i "s/versionName \"[^\"]*\"/versionName \"1.0.${{ github.run_number }}\"/" "$GRADLE_FILE"
+          MANIFEST=$(find android/app -name "AndroidManifest.xml" | head -1)
+          sed -i 's|<application|<uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <application|' "$MANIFEST"
+          mkdir -p android/app/src/main/java/com/suivirecitation/fautes
+          cat > MainActivity.java << 'JAVAEOF'
+          package com.suivirecitation.fautes;
+          import com.getcapacitor.BridgeActivity;
+          import android.os.Bundle;
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebView;
+          import com.getcapacitor.community.speechrecognition.SpeechRecognition;
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(SpeechRecognition.class);
+                  super.onCreate(savedInstanceState);
+                  WebView webView = getBridge().getWebView();
+                  webView.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public void onPermissionRequest(PermissionRequest request) {
+                          request.grant(request.getResources());
+                      }
+                  });
+              }
+          }
+          JAVAEOF
+          cp MainActivity.java android/app/src/main/java/com/suivirecitation/fautes/MainActivity.java
           cp suivi.jks android/app/suivi.jks
           cd android
           chmod +x gradlew
