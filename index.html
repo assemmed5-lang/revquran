@@ -1505,6 +1505,24 @@ function ajouterLigneBilan(conteneur, classe, item) {
 // ---- INITIALISATION ----
 chargerFautes();
 
+// Demande la permission micro UNE SEULE FOIS au chargement de l'app, en
+// arrière-plan, sans bloquer ni gêner l'utilisateur. Ceci est DÉCOUPLÉ du
+// démarrage réel de l'écoute (bouton "Démarrer l'écoute") : le temps qui
+// sépare les deux évite toute course avec recognition.start() qui causait
+// la fermeture immédiate du micro. Une fois la permission RECORD_AUDIO
+// accordée au niveau du système, elle reste valable pour tout le reste de
+// la session — webkitSpeechRecognition n'aura ensuite plus besoin de rien
+// redemander.
+(function demanderPermissionMicroAuDemarrage() {
+  try {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function(stream) { stream.getTracks().forEach(function(t) { t.stop(); }); })
+        .catch(function() {});
+    }
+  } catch (e) {}
+})();
+
 </script>
 </body>
 </html>
