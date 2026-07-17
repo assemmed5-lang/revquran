@@ -1212,17 +1212,33 @@ function gererFinReconnaissance() {
   // PAS la fin de la session d'écoute, juste la fin d'un cycle interne du
   // moteur. Les mots ont déjà tous été traités au fil de l'eau (résultats
   // provisoires ET finaux traités mot par mot dans traiterResultatVocal), il
-  // n'y a donc plus rien à "rattraper" ici : on relance IMMÉDIATEMENT.
+  // n'y a donc plus rien à "rattraper" ici.
+  //
+  // On NE recrée PAS systématiquement une nouvelle instance ici : sur
+  // certains navigateurs (Chrome desktop notamment), instancier un nouveau
+  // SpeechRecognition à chaque cycle redemande l'accès au micro à chaque
+  // fois, ce qui se manifeste comme une demande de permission répétée en
+  // boucle après seulement quelques mots. On réutilise donc la même
+  // instance (autorisé par la spec) et on ne recrée un objet que si la
+  // réutilisation échoue. Un très court délai évite aussi les redémarrages
+  // trop rapprochés qui provoquent ce comportement.
   if (!ecouteActive) return;
-  try {
-    reconnaissance = creerRecognizer();
-    reconnaissance.start();
-  } catch (e) {
-    setTimeout(function() {
-      if (!ecouteActive) return;
-      try { reconnaissance = creerRecognizer(); reconnaissance.start(); } catch (e2) {}
-    }, 80);
-  }
+  setTimeout(function() {
+    if (!ecouteActive) return;
+    try {
+      reconnaissance.start();
+    } catch (e) {
+      try {
+        reconnaissance = creerRecognizer();
+        reconnaissance.start();
+      } catch (e2) {
+        setTimeout(function() {
+          if (!ecouteActive) return;
+          try { reconnaissance = creerRecognizer(); reconnaissance.start(); } catch (e3) {}
+        }, 150);
+      }
+    }
+  }, 200);
 }
 
 async function demarrerEcoute() {
