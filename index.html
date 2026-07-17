@@ -1225,22 +1225,7 @@ function gererFinReconnaissance() {
   }
 }
 
-// Détecte si on tourne dans l'app compilée (Capacitor) plutôt que dans un
-// navigateur classique. À l'intérieur de l'APK, webkitSpeechRecognition
-// existe comme objet JS dans la WebView mais n'est PAS fiable sur beaucoup
-// d'appareils (elle démarre puis échoue en boucle en quelques centaines de
-// ms, ce qui donnait l'impression que le micro "s'ouvrait puis se fermait").
-// On force donc le plugin natif Capacitor dès qu'on est dans l'app, et on ne
-// réserve l'API navigateur qu'aux tests en dehors de l'APK (Chrome desktop/mobile).
-function estNatif() {
-  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
-}
-
 async function demarrerEcoute() {
-  if (estNatif()) {
-    await demarrerEcouteNative();
-    return;
-  }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
     await demarrerEcouteNative();
@@ -1270,7 +1255,7 @@ async function demarrerEcoute() {
   document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
 }
 
-// ---- Plugin natif Capacitor (utilisé PAR DÉFAUT dans l'APK) ----
+// ---- Plugin natif Capacitor : dernier recours UNIQUEMENT (si webkitSpeechRecognition est absent) ----
 let derniersMotsNatifsEnvoyes = 0;
 
 async function demarrerEcouteNative() {
