@@ -1128,12 +1128,19 @@ function wordsMatch(nw, hw) {
 }
 
 // ---- Construction de la banque de mots (à partir du verset de départ) ----
+// Marques de pause/dizainage coraniques (waqf ۛ ۖ ۗ ۚ ۜ..., dizainage ۞, etc.)
+// qui apparaissent comme "mots" séparés par des espaces dans le texte mais qui
+// ne sont jamais prononcées : il ne faut jamais les exiger de la reconnaissance
+// vocale, sinon le pointeur reste bloqué dessus indéfiniment.
+const RE_MARQUE_NON_PRONONCEE = /^[\u06D6-\u06ED\u06DE]+$/;
+
 function construireBanqueMots(sourate, versetDepart) {
   const versets = listeVersetsSourate(sourate).filter(function(v) { return v >= versetDepart; });
   const banque = [];
   versets.forEach(function(v) {
     const texte = texteDuVerset(sourate, v);
     texte.trim().split(/\s+/).filter(Boolean).forEach(function(m) {
+      if (RE_MARQUE_NON_PRONONCEE.test(m)) return; // ex: ۛ, ۞ — jamais un vrai mot
       banque.push({ v: v, texte: m, normalise: norm(m) });
     });
   });
@@ -1149,6 +1156,10 @@ function demarrerRecitation(sourateId, versetDepart) {
   bufferBrutEnAttente = [];
   suspectsSession = [];
   erreursSession = [];
+  texteEntenduGlobal = '';
+  nbMotsDejaExtraits = 0;
+  sessionFinal = '';
+  sessionMeilleur = '';
 
   document.getElementById('recitation-titre').textContent = 'سورة ' + sourateEnCours.nom;
   document.getElementById('screen-choix-depart').classList.add('hidden');
@@ -1173,7 +1184,40 @@ function quitterRecitation() {
 // androidScheme:'https' (origine sécurisée). Le plugin natif Capacitor n'est
 // utilisé qu'en dernier recours si l'API navigateur est absente.
 // ══════════════════════════════════════════════
-let comptesMotsParIndex = {};
+// ══════════════════════════════════════════════
+// ARCHITECTURE À 3 COUCHES (inspirée de l'app tilawa, qui est stable) :
+//
+//  1) CAPTURE   : une session webkitSpeechRecognition, dont le texte reconnu
+//                 (sessionMeilleur) ne peut QUE grandir pendant sa durée de vie,
+//                 jamais rétrécir/repartir de zéro tant qu'elle est active.
+//  2) ACCUMULATION : à chaque redémarrage du moteur (onend), le meilleur texte
+//                 de la session qui se termine est figé dans un accumulateur
+//                 GLOBAL (texteEntenduGlobal) qui, lui, ne redémarre JAMAIS.
+//                 Un curseur (nbMotsDejaExtraits) garantit qu'on ne pousse
+//                 vers la comparaison QUE les mots réellement nouveaux.
+//  3) COMPARAISON : traiterMotEntendu() (inchangée) — reçoit un flux de mots
+//                 strictement croissant, un par un, jamais de doublon/écho.
+//
+// Avant cette refonte, comptesMotsParIndex était remis à zéro à CHAQUE
+// redémarrage du moteur (onstart), donc l'app "oubliait" ce qu'elle avait
+// déjà transmis à la comparaison : au redémarrage suivant, des mots déjà
+// traités pouvaient être retransmis (dans le désordre, dupliqués...),
+// produisant des rafales de fausses erreurs. Avec l'accumulateur global,
+// ce problème est éliminé structurellement : impossible de repousser un mot
+// déjà compté, quel que soit le nombre de redémarrages du moteur.
+// ══════════════════════════════════════════════
+let sessionFinal = '';     // transcriptions marquées isFinal par le moteur, session en cours
+let sessionMeilleur = '';  // sessionFinal + résultat intermédiaire courant (ne rétrécit jamais)
+let texteEntenduGlobal = '';  // accumulateur global, ne redémarre jamais
+let nbMotsDejaExtraits = 0;   // curseur : nb de mots déjà transmis à la comparaison
+
+function pousserTexteEntendu(texteComplet) {
+  const mots = texteComplet.trim().split(/\s+/).filter(Boolean);
+  if (mots.length > nbMotsDejaExtraits) {
+    mots.slice(nbMotsDejaExtraits).forEach(traiterMotEntendu);
+    nbMotsDejaExtraits = mots.length;
+  }
+}
 
 function creerRecognizer() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1181,13 +1225,28 @@ function creerRecognizer() {
   r.lang = 'ar-SA';
   r.continuous = true;
   r.interimResults = true;
-  r.maxAlternatives = 3;
+  r.maxAlternatives = 1;
+  sessionFinal = '';
+  sessionMeilleur = '';
   r.onstart = function() {
-    comptesMotsParIndex = {};
     const bouton = document.getElementById('btn-toggle-ecoute');
     if (bouton) bouton.classList.add('ecoute-active');
   };
-  r.onresult = traiterResultatVocal;
+  r.onresult = function(event) {
+    reinitialiserTimerSilence();
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const resultat = event.results[i];
+      if (resultat.isFinal) sessionFinal += resultat[0].transcript + ' ';
+      else interim += resultat[0].transcript;
+    }
+    const candidat = (sessionFinal + interim).trim();
+    // Ne jamais laisser sessionMeilleur rétrécir (garde contre un résultat
+    // intermédiaire plus court qui écraserait un résultat déjà plus complet).
+    if (candidat.length >= sessionMeilleur.length) sessionMeilleur = candidat;
+    const texteComplet = (texteEntenduGlobal + ' ' + sessionMeilleur).trim();
+    pousserTexteEntendu(texteComplet);
+  };
   r.onerror = function(e) {
     // "no-speech" et "aborted" sont normaux (silence, ou arrêt/redémarrage
     // volontaire) : pas de vraies erreurs, on ne les affiche pas.
@@ -1208,37 +1267,28 @@ function creerRecognizer() {
 }
 
 function gererFinReconnaissance() {
-  // webkitSpeechRecognition s'arrête seule après un court silence : ce n'est
-  // PAS la fin de la session d'écoute, juste la fin d'un cycle interne du
-  // moteur. Les mots ont déjà tous été traités au fil de l'eau (résultats
-  // provisoires ET finaux traités mot par mot dans traiterResultatVocal), il
-  // n'y a donc plus rien à "rattraper" ici.
-  //
-  // On NE recrée PAS systématiquement une nouvelle instance ici : sur
-  // certains navigateurs (Chrome desktop notamment), instancier un nouveau
-  // SpeechRecognition à chaque cycle redemande l'accès au micro à chaque
-  // fois, ce qui se manifeste comme une demande de permission répétée en
-  // boucle après seulement quelques mots. On réutilise donc la même
-  // instance (autorisé par la spec) et on ne recrée un objet que si la
-  // réutilisation échoue. Un très court délai évite aussi les redémarrages
-  // trop rapprochés qui provoquent ce comportement.
+  // Geler le meilleur texte connu de la session qui se termine dans
+  // l'accumulateur global, AVANT de perdre cette session. C'est la clé de
+  // la stabilité : peu importe ce qui se passe ensuite (nouvelle instance,
+  // nouveau cycle du moteur...), ce texte ne disparaît jamais.
+  if (sessionMeilleur.trim().length > 0) {
+    texteEntenduGlobal = (texteEntenduGlobal + ' ' + sessionMeilleur).trim();
+  }
   if (!ecouteActive) return;
-  setTimeout(function() {
-    if (!ecouteActive) return;
-    try {
-      reconnaissance.start();
-    } catch (e) {
-      try {
-        reconnaissance = creerRecognizer();
-        reconnaissance.start();
-      } catch (e2) {
-        setTimeout(function() {
-          if (!ecouteActive) return;
-          try { reconnaissance = creerRecognizer(); reconnaissance.start(); } catch (e3) {}
-        }, 150);
-      }
-    }
-  }, 200);
+  // Toujours une INSTANCE NEUVE à chaque redémarrage (comme tilawa) : une
+  // instance webkitSpeechRecognition déjà utilisée est mal spécifiée pour la
+  // réutilisation et peut se bloquer silencieusement (aucune exception levée,
+  // mais plus aucun audio réellement capté) — c'est ce qui provoquait les
+  // cycles infinis d'ouverture/fermeture sans transcription sur PC.
+  try {
+    reconnaissance = creerRecognizer();
+    reconnaissance.start();
+  } catch (e) {
+    setTimeout(function() {
+      if (!ecouteActive) return;
+      try { reconnaissance = creerRecognizer(); reconnaissance.start(); } catch (e2) {}
+    }, 150);
+  }
 }
 
 async function demarrerEcoute() {
@@ -1247,7 +1297,8 @@ async function demarrerEcoute() {
     await demarrerEcouteNative();
     return;
   }
-  comptesMotsParIndex = {};
+  texteEntenduGlobal = '';
+  nbMotsDejaExtraits = 0;
   ecouteActive = true;
   try {
     reconnaissance = creerRecognizer();
@@ -1363,23 +1414,6 @@ function reinitialiserTimerSilence() {
   timerSilence = setTimeout(function() {
     if (ecouteActive) montrerAide();
   }, 7000);
-}
-
-function traiterResultatVocal(event) {
-  reinitialiserTimerSilence();
-  for (let i = event.resultIndex; i < event.results.length; i++) {
-    const resultat = event.results[i];
-    const transcript = resultat[0].transcript || '';
-    const mots = transcript.trim().split(/\s+/).filter(Boolean);
-    const dejaTraites = comptesMotsParIndex[i] || 0;
-    if (mots.length > dejaTraites) {
-      mots.slice(dejaTraites).forEach(traiterMotEntendu);
-      comptesMotsParIndex[i] = mots.length;
-    }
-    if (resultat.isFinal) {
-      delete comptesMotsParIndex[i];
-    }
-  }
 }
 
 // ---- Cœur de l'algorithme : seuils de sensibilité ----
