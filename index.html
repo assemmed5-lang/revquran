@@ -1186,10 +1186,19 @@ function creerRecognizer() {
   };
   r.onresult = traiterResultatVocal;
   r.onerror = function(e) {
-    // "aborted" se produit normalement à chaque redémarrage volontaire
-    // (reconnaissance.stop() puis nouvelle instance) : ce n'est pas une
-    // vraie erreur, il ne faut surtout pas l'afficher ni couper l'écoute.
-    if (e.error !== 'aborted') console.warn('Erreur reco vocale', e.error);
+    // "no-speech" et "aborted" sont normaux (silence, ou arrêt/redémarrage
+    // volontaire) : pas de vraies erreurs, on ne les affiche pas.
+    if (e.error === 'not-allowed' || e.error === 'audio-capture') {
+      // Refus définitif de permission : inutile (et néfaste) de continuer à
+      // boucler indéfiniment sur des redémarrages qui échoueront tous.
+      ecouteActive = false;
+      const bouton = document.getElementById('btn-toggle-ecoute');
+      if (bouton) { bouton.textContent = "🎙️ Démarrer l'écoute"; bouton.classList.remove('ecoute-active'); }
+      const statut = document.getElementById('statut-ecoute');
+      if (statut) statut.textContent = 'Micro refusé — vérifie les permissions de l\'application';
+    } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
+      console.warn('Erreur reco vocale', e.error);
+    }
   };
   r.onend = gererFinReconnaissance;
   return r;
@@ -1504,24 +1513,6 @@ function ajouterLigneBilan(conteneur, classe, item) {
 
 // ---- INITIALISATION ----
 chargerFautes();
-
-// Demande la permission micro UNE SEULE FOIS au chargement de l'app, en
-// arrière-plan, sans bloquer ni gêner l'utilisateur. Ceci est DÉCOUPLÉ du
-// démarrage réel de l'écoute (bouton "Démarrer l'écoute") : le temps qui
-// sépare les deux évite toute course avec recognition.start() qui causait
-// la fermeture immédiate du micro. Une fois la permission RECORD_AUDIO
-// accordée au niveau du système, elle reste valable pour tout le reste de
-// la session — webkitSpeechRecognition n'aura ensuite plus besoin de rien
-// redemander.
-(function demanderPermissionMicroAuDemarrage() {
-  try {
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ audio: true })
-        .then(function(stream) { stream.getTracks().forEach(function(t) { t.stop(); }); })
-        .catch(function() {});
-    }
-  } catch (e) {}
-})();
 
 </script>
 </body>
