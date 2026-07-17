@@ -1148,12 +1148,11 @@ function demarrerRecitation(sourateId, versetDepart) {
   document.getElementById('recitation-titre').textContent = 'سورة ' + sourateEnCours.nom;
   document.getElementById('screen-choix-depart').classList.add('hidden');
   document.getElementById('screen-recitation').classList.remove('hidden');
-  document.getElementById('btn-toggle-ecoute').textContent = '⏸️ Pause';
-  document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
+  document.getElementById('btn-toggle-ecoute').textContent = '🎙️ Démarrer l\'écoute';
+  document.getElementById('statut-ecoute').textContent = 'Appuyez sur le bouton micro pour commencer';
   document.getElementById('aide-suite').classList.add('hidden');
 
   majAffichageRecitation();
-  demarrerEcoute();
 }
 
 function quitterRecitation() {
@@ -1204,10 +1203,23 @@ function gererFinReconnaissance() {
   }
 }
 
-function demarrerEcoute() {
+async function demarrerEcoute() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
     demarrerEcouteNative();
+    return;
+  }
+  // Demande EXPLICITE de la permission micro, déclenchée directement par le
+  // tap de l'utilisateur : sans ça, certains navigateurs/WebView bloquent
+  // silencieusement SpeechRecognition (le micro "ne s'ouvre pas") car il n'y
+  // a pas de geste utilisateur direct assez clair pour l'API.
+  try {
+    const flux = await navigator.mediaDevices.getUserMedia({ audio: true });
+    flux.getTracks().forEach(function(t) { t.stop(); }); // on n'a besoin que de la permission, pas du flux lui-même
+  } catch (e) {
+    alert("Impossible d'accéder au micro : " + (e.message || e) + "\nVérifiez que la permission microphone est autorisée pour cette app/site.");
+    document.getElementById('btn-toggle-ecoute').textContent = "🎙️ Démarrer l'écoute";
+    document.getElementById('statut-ecoute').textContent = 'Micro refusé';
     return;
   }
   interimTexteCourant = '';
@@ -1217,6 +1229,8 @@ function demarrerEcoute() {
     reconnaissance.start();
   } catch (e) {}
   reinitialiserTimerSilence();
+  document.getElementById('btn-toggle-ecoute').textContent = '⏸️ Pause';
+  document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
 }
 
 // ---- Repli sur le plugin natif Capacitor (si l'API navigateur est absente) ----
@@ -1240,8 +1254,13 @@ async function demarrerEcouteNative() {
       if (mots.length) traiterMotEntendu(mots[mots.length - 1]);
     });
     await SRPlugin.start({ language: 'ar-SA', partialResults: true, popup: false });
+    document.getElementById('btn-toggle-ecoute').textContent = '⏸️ Pause';
+    document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
   } catch (e) {
     alert('Erreur au démarrage de la reconnaissance native : ' + (e.message || e));
+    document.getElementById('btn-toggle-ecoute').textContent = "🎙️ Démarrer l'écoute";
+    document.getElementById('statut-ecoute').textContent = 'Micro indisponible';
+    return;
   }
   reinitialiserTimerSilence();
 }
@@ -1257,15 +1276,13 @@ function arreterEcoute() {
   clearTimeout(timerSilence);
 }
 
-function toggleEcoute() {
+async function toggleEcoute() {
   if (ecouteActive) {
     arreterEcoute();
     document.getElementById('btn-toggle-ecoute').textContent = '▶️ Reprendre';
     document.getElementById('statut-ecoute').textContent = '⏸️ En pause';
   } else {
-    demarrerEcoute();
-    document.getElementById('btn-toggle-ecoute').textContent = '⏸️ Pause';
-    document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
+    await demarrerEcoute();
   }
 }
 
