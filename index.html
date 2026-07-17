@@ -50,6 +50,77 @@
   .menu-btn.secondaire {
     background: #6b8e6d;
   }
+  .menu-btn.tertiaire {
+    background: #a67c3d;
+  }
+  #screen-recitation {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    gap: 10px;
+    padding: 10px;
+    box-sizing: border-box;
+  }
+  .statut-ecoute {
+    text-align: center;
+    font-family: sans-serif;
+    font-size: 14px;
+    color: #2c3e2d;
+    flex-shrink: 0;
+  }
+  .recitation-texte {
+    flex: 1;
+    overflow-y: auto;
+    border: 2px solid #2c3e2d;
+    border-radius: 8px;
+    background: #fffef8;
+    padding: 12px;
+    font-size: 22px;
+    line-height: 2.4;
+    text-align: justify;
+  }
+  .curseur-recitation {
+    display: inline-block;
+    color: #a67c3d;
+    font-weight: bold;
+    animation: clignoter 1s infinite;
+  }
+  @keyframes clignoter {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+  .aide-suite {
+    background: #fff4e0;
+    border: 2px solid #a67c3d;
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 20px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .recitation-actions {
+    display: flex;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .recitation-actions .menu-btn {
+    margin: 0;
+  }
+  .ligne-bilan {
+    padding: 10px;
+    margin: 8px 0;
+    border-radius: 6px;
+    font-size: 18px;
+    font-family: inherit;
+  }
+  .bilan-erreur {
+    background: #fdeaea;
+    border-right: 4px solid #c0392b;
+  }
+  .bilan-suspect {
+    background: #fff7e0;
+    border-right: 4px solid #a67c3d;
+  }
   .sourate-btn {
     display: block;
     width: 100%;
@@ -279,6 +350,7 @@
   <h1>Suivi de récitation</h1>
   <button class="menu-btn" onclick="ouvrirListeSourates('consultation')">Consulter les erreurs</button>
   <button class="menu-btn secondaire" onclick="ouvrirListeSourates('entree')">Introduire des nouvelles erreurs</button>
+  <button class="menu-btn tertiaire" onclick="ouvrirListeSourates('recitation')">🎙️ Réciter (écoute active)</button>
 </div>
 
 <div class="screen hidden" id="screen-liste-sourates">
@@ -299,6 +371,33 @@
   </div>
 
   <div class="verset-wrap hidden" id="liste-versets" style="overflow-y:auto;"></div>
+</div>
+
+<div class="screen hidden" id="screen-choix-depart">
+  <button class="back-btn" onclick="retourListeSouratesDepuisChoix()">← Retour</button>
+  <h1>À partir de quel verset ?</h1>
+  <div id="liste-choix-depart"></div>
+</div>
+
+<div class="hidden" id="screen-recitation">
+  <div class="topbar">
+    <button class="back-btn" onclick="quitterRecitation()">← Quitter</button>
+    <span class="topbar-titre" id="recitation-titre"></span>
+    <span class="topbar-page" id="recitation-progress"></span>
+  </div>
+  <div id="statut-ecoute" class="statut-ecoute">🎙️ Écoute en cours…</div>
+  <div id="recitation-texte" class="recitation-texte"></div>
+  <div id="aide-suite" class="aide-suite hidden"></div>
+  <div class="recitation-actions">
+    <button class="menu-btn" id="btn-toggle-ecoute" onclick="toggleEcoute()">⏸️ Pause</button>
+    <button class="menu-btn secondaire" onclick="terminerRecitation()">✅ Terminer</button>
+  </div>
+</div>
+
+<div class="screen hidden" id="screen-bilan">
+  <button class="back-btn" onclick="retourMenuDepuisBilan()">← Menu</button>
+  <h1>Bilan de récitation</h1>
+  <div id="liste-bilan"></div>
 </div>
 
 <div class="modal-overlay hidden" id="modal-faute">
@@ -424,6 +523,17 @@ const sourates = [
 ];
 // ---- ÉTAT ----
 let sourateActuelle = null;
+// ---- ÉTAT MODE RÉCITATION ----
+let sourateEnCoursChoix = null;
+let sourateEnCours = null;
+let banqueMots = [];
+let pointeurMots = 0;
+let bufferEnAttente = [];
+let suspectsSession = [];
+let erreursSession = [];
+let reconnaissance = null;
+let ecouteActive = false;
+let timerSilence = null;
 let versetActuel = null;
 let modeActuel = 'entree';
 let pageActuelleIndex = 0;
@@ -450,7 +560,9 @@ function retourMenu() {
 function ouvrirListeSourates(mode) {
   modeActuel = mode;
   document.getElementById('titre-liste').textContent =
-    mode === 'consultation' ? 'Consulter les erreurs' : 'Choisir une sourate';
+    mode === 'consultation' ? 'Consulter les erreurs' :
+    mode === 'recitation' ? 'Choisir une sourate à réciter' :
+    'Choisir une sourate';
 
   const conteneur = document.getElementById('liste-sourates');
   conteneur.innerHTML = '';
@@ -467,7 +579,10 @@ function ouvrirListeSourates(mode) {
       const btn = document.createElement('button');
       btn.className = 'sourate-btn';
       btn.textContent = s.id + ' - سورة ' + s.nom;
-      btn.onclick = function() { ouvrirSourate(s.id); };
+      btn.onclick = function() {
+        if (mode === 'recitation') { ouvrirChoixDepart(s.id); }
+        else { ouvrirSourate(s.id); }
+      };
       conteneur.appendChild(btn);
     });
   }
@@ -695,8 +810,17 @@ function ajusterTaillePage() {
   const lignes = Array.from(conteneur.querySelectorAll('.ligne-mushaf'));
   if (lignes.length === 0) return;
 
-  const hauteurDispo = conteneur.clientHeight - 4;
-  const largeurDispo = conteneur.clientWidth - 6;
+  const stylesConteneur = getComputedStyle(conteneur);
+  const paddingHaut = parseFloat(stylesConteneur.paddingTop) || 0;
+  const paddingBas = parseFloat(stylesConteneur.paddingBottom) || 0;
+  const paddingGauche = parseFloat(stylesConteneur.paddingLeft) || 0;
+  const paddingDroite = parseFloat(stylesConteneur.paddingRight) || 0;
+
+  // clientHeight/clientWidth incluent déjà le padding (box-sizing: border-box) :
+  // l'espace réellement disponible pour le texte est donc la boîte de contenu,
+  // c'est-à-dire clientWidth/Height MOINS le padding réel (et non une marge arbitraire).
+  const hauteurDispo = conteneur.clientHeight - paddingHaut - paddingBas;
+  const largeurDispo = conteneur.clientWidth - paddingGauche - paddingDroite;
 
   const budgetParLigne = hauteurDispo / lignes.length;
   let taille = Math.floor(budgetParLigne / 1.75);
@@ -908,6 +1032,441 @@ function sauvegarderFaute() {
   sauvegarderDansStockage();
   fermerModal();
   afficherPage();
+}
+
+// ================== MODE RÉCITATION AVEC ÉCOUTE ACTIVE ==================
+
+// ---- Liste ordonnée des versets d'une sourate ----
+function listeVersetsSourate(sourate) {
+  const set = new Set();
+  sourate.pages.forEach(function(page) {
+    page.lignes.forEach(function(ligne) {
+      ligne.forEach(function(segment) {
+        if (segment.v !== 0) set.add(segment.v);
+      });
+    });
+  });
+  return Array.from(set).sort(function(a, b) { return a - b; });
+}
+
+// ---- Écran : choix du verset de départ ----
+function ouvrirChoixDepart(sourateId) {
+  sourateEnCoursChoix = sourates.find(function(s) { return s.id === sourateId; });
+  const conteneur = document.getElementById('liste-choix-depart');
+  conteneur.innerHTML = '';
+  listeVersetsSourate(sourateEnCoursChoix).forEach(function(v) {
+    const btn = document.createElement('button');
+    btn.className = 'sourate-btn';
+    const texte = texteDuVerset(sourateEnCoursChoix, v);
+    btn.innerHTML = '<span class="num-verset-mushaf">' + v + '</span> ' + texte;
+    btn.onclick = function() { demarrerRecitation(sourateEnCoursChoix.id, v); };
+    conteneur.appendChild(btn);
+  });
+  document.getElementById('screen-liste-sourates').classList.add('hidden');
+  document.getElementById('screen-choix-depart').classList.remove('hidden');
+}
+
+function retourListeSouratesDepuisChoix() {
+  document.getElementById('screen-choix-depart').classList.add('hidden');
+  document.getElementById('screen-liste-sourates').classList.remove('hidden');
+}
+
+function retourMenuDepuisBilan() {
+  document.getElementById('screen-bilan').classList.add('hidden');
+  document.getElementById('screen-menu').classList.remove('hidden');
+}
+
+// ---- Normalisation pour la comparaison texte attendu / texte entendu ----
+// (reprend la logique éprouvée de l'app tilawa : diacritiques, variantes de
+// lettres, tatwil, et compression des lettres répétées type "ءءء" -> "ءء")
+function norm(s) {
+  return s
+    .replace(/[\u064B-\u065F\u0670\u0671]/g, "")
+    .replace(/[أإآٱا]/g, "ا").replace(/[ىي]/g, "ي").replace(/ة/g, "ه")
+    .replace(/ـ/g, "")
+    .replace(/(.)\1{2,}/g, "$1$1")
+    .replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+// ---- Distance d'édition plafonnée (perf) ----
+function editDistance(a, b, maxDist) {
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > maxDist) return maxDist + 1;
+  let prev = new Array(lb + 1);
+  let curr = new Array(lb + 1);
+  for (let j = 0; j <= lb; j++) prev[j] = j;
+  for (let i = 1; i <= la; i++) {
+    curr[0] = i;
+    let rowMin = curr[0];
+    for (let j = 1; j <= lb; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+      if (curr[j] < rowMin) rowMin = curr[j];
+    }
+    if (rowMin > maxDist) return maxDist + 1;
+    const tmp = prev; prev = curr; curr = tmp;
+  }
+  return prev[lb];
+}
+
+// ---- Tolérance proportionnelle à la longueur du mot : absorbe la médiocrité
+// de la reconnaissance vocale sur certains mots sans devenir trop laxiste ----
+function toleranceFor(len) {
+  if (len <= 3) return 1;
+  if (len <= 6) return 2;
+  return 3;
+}
+function wordsMatch(nw, hw) {
+  if (hw === nw) return true;
+  const maxLen = Math.max(nw.length, hw.length);
+  const tol = toleranceFor(maxLen);
+  return editDistance(nw, hw, tol) <= tol;
+}
+
+// ---- Construction de la banque de mots (à partir du verset de départ) ----
+function construireBanqueMots(sourate, versetDepart) {
+  const versets = listeVersetsSourate(sourate).filter(function(v) { return v >= versetDepart; });
+  const banque = [];
+  versets.forEach(function(v) {
+    const texte = texteDuVerset(sourate, v);
+    texte.trim().split(/\s+/).filter(Boolean).forEach(function(m) {
+      banque.push({ v: v, texte: m, normalise: norm(m) });
+    });
+  });
+  return banque;
+}
+
+// ---- Démarrage d'une session de récitation ----
+function demarrerRecitation(sourateId, versetDepart) {
+  sourateEnCours = sourates.find(function(s) { return s.id === sourateId; });
+  banqueMots = construireBanqueMots(sourateEnCours, versetDepart);
+  pointeurMots = 0;
+  bufferEnAttente = [];
+  suspectsSession = [];
+  erreursSession = [];
+
+  document.getElementById('recitation-titre').textContent = 'سورة ' + sourateEnCours.nom;
+  document.getElementById('screen-choix-depart').classList.add('hidden');
+  document.getElementById('screen-recitation').classList.remove('hidden');
+  document.getElementById('btn-toggle-ecoute').textContent = '⏸️ Pause';
+  document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
+  document.getElementById('aide-suite').classList.add('hidden');
+
+  majAffichageRecitation();
+  demarrerEcoute();
+}
+
+function quitterRecitation() {
+  arreterEcoute();
+  document.getElementById('screen-recitation').classList.add('hidden');
+  document.getElementById('screen-menu').classList.remove('hidden');
+}
+
+// ══════════════════════════════════════════════
+// RECONNAISSANCE VOCALE — robuste aux coupures silence/WebView
+// Stratégie (identique à l'app tilawa) : webkitSpeechRecognition EN PRIORITÉ,
+// elle fonctionne dans Chrome ET dans la WebView Capacitor grâce à
+// androidScheme:'https' (origine sécurisée). Le plugin natif Capacitor n'est
+// utilisé qu'en dernier recours si l'API navigateur est absente.
+// ══════════════════════════════════════════════
+let interimTexteCourant = '';
+
+function creerRecognizer() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const r = new SR();
+  r.lang = 'ar-SA';
+  r.continuous = true;
+  r.interimResults = true;
+  r.onresult = traiterResultatVocal;
+  r.onerror = function(e) { console.warn('Erreur reco vocale', e); };
+  r.onend = gererFinReconnaissance;
+  return r;
+}
+
+function gererFinReconnaissance() {
+  // webkitSpeechRecognition s'arrête seule après un court silence : ce n'est
+  // PAS la fin de la session d'écoute, juste la fin d'un cycle interne du
+  // moteur. On fige d'abord le texte "interim" pas encore finalisé pour ne
+  // perdre aucun mot, puis on relance IMMÉDIATEMENT (nouvelle instance).
+  if (interimTexteCourant.trim()) {
+    interimTexteCourant.trim().split(/\s+/).filter(Boolean).forEach(traiterMotEntendu);
+    interimTexteCourant = '';
+  }
+  if (!ecouteActive) return;
+  try {
+    reconnaissance = creerRecognizer();
+    reconnaissance.start();
+  } catch (e) {
+    setTimeout(function() {
+      if (!ecouteActive) return;
+      try { reconnaissance = creerRecognizer(); reconnaissance.start(); } catch (e2) {}
+    }, 80);
+  }
+}
+
+function demarrerEcoute() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    demarrerEcouteNative();
+    return;
+  }
+  interimTexteCourant = '';
+  ecouteActive = true;
+  try {
+    reconnaissance = creerRecognizer();
+    reconnaissance.start();
+  } catch (e) {}
+  reinitialiserTimerSilence();
+}
+
+// ---- Repli sur le plugin natif Capacitor (si l'API navigateur est absente) ----
+async function demarrerEcouteNative() {
+  const SRPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition;
+  if (!SRPlugin) {
+    alert("La reconnaissance vocale n'est pas disponible sur cet appareil.");
+    return;
+  }
+  try { await SRPlugin.requestPermission(); } catch (e) {}
+  if (window._recitationListener) { try { window._recitationListener.remove(); } catch (e) {} }
+  ecouteActive = true;
+  try {
+    window._recitationListener = await SRPlugin.addListener('partialResults', function(data) {
+      reinitialiserTimerSilence();
+      const txt = (data.matches && data.matches[0]) ? data.matches[0] : '';
+      const mots = txt.trim().split(/\s+/).filter(Boolean);
+      // Le plugin natif ne distingue pas final/interim mot à mot : on ne
+      // traite que le DERNIER mot de chaque paquet pour éviter les doublons,
+      // les mots précédents ayant déjà été consommés au paquet précédent.
+      if (mots.length) traiterMotEntendu(mots[mots.length - 1]);
+    });
+    await SRPlugin.start({ language: 'ar-SA', partialResults: true, popup: false });
+  } catch (e) {
+    alert('Erreur au démarrage de la reconnaissance native : ' + (e.message || e));
+  }
+  reinitialiserTimerSilence();
+}
+
+function arreterEcoute() {
+  ecouteActive = false;
+  if (reconnaissance) { try { reconnaissance.stop(); } catch (e) {} reconnaissance = null; }
+  const SRPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition;
+  if (SRPlugin) {
+    try { SRPlugin.stop(); } catch (e) {}
+    if (window._recitationListener) { try { window._recitationListener.remove(); } catch (e) {} window._recitationListener = null; }
+  }
+  clearTimeout(timerSilence);
+}
+
+function toggleEcoute() {
+  if (ecouteActive) {
+    arreterEcoute();
+    document.getElementById('btn-toggle-ecoute').textContent = '▶️ Reprendre';
+    document.getElementById('statut-ecoute').textContent = '⏸️ En pause';
+  } else {
+    demarrerEcoute();
+    document.getElementById('btn-toggle-ecoute').textContent = '⏸️ Pause';
+    document.getElementById('statut-ecoute').textContent = '🎙️ Écoute en cours…';
+  }
+}
+
+function reinitialiserTimerSilence() {
+  clearTimeout(timerSilence);
+  timerSilence = setTimeout(function() {
+    if (ecouteActive) montrerAide();
+  }, 7000);
+}
+
+function traiterResultatVocal(event) {
+  reinitialiserTimerSilence();
+  let interim = '';
+  for (let i = event.resultIndex; i < event.results.length; i++) {
+    const resultat = event.results[i];
+    if (resultat.isFinal) {
+      resultat[0].transcript.trim().split(/\s+/).filter(Boolean).forEach(traiterMotEntendu);
+    } else {
+      interim += resultat[0].transcript;
+    }
+  }
+  interimTexteCourant = interim;
+}
+
+// ---- Cœur de l'algorithme : seuils de sensibilité ----
+const FENETRE_RECHERCHE = 25;   // nb de mots attendus explorés pour resynchroniser
+const TAILLE_NGRAM_RESYNC = 3;  // nb de mots CONSÉCUTIFS requis pour valider une resync
+                                 // (un seul mot suffirait presque toujours vu les répétitions
+                                 // du texte coranique + la tolérance -> aucune vraie erreur ne
+                                 // serait jamais détectée. 3 mots d'affilée est beaucoup plus fiable)
+const SEUIL_IGNORER = 5;        // écart < 5 mots : faute de transcription, ignorée
+const SEUIL_ERREUR = 10;        // écart >= 10 mots : vraie erreur déclarée
+
+function traiterMotEntendu(motBrut) {
+  if (!sourateEnCours || pointeurMots >= banqueMots.length) return;
+  const motNorm = norm(motBrut);
+  if (!motNorm) return;
+
+  // 1. correspondance directe avec le mot attendu au pointeur : aucune
+  //    ambiguïté possible ici (ce n'est pas une recherche), on avance et on
+  //    considère tout ce qui était en attente comme du bruit de transcription.
+  if (wordsMatch(banqueMots[pointeurMots].normalise, motNorm)) {
+    bufferEnAttente = [];
+    pointeurMots++;
+    majAffichageRecitation();
+    return;
+  }
+
+  // 2. pas de correspondance directe : le mot est mis en attente. On ne
+  //    tente une resynchronisation QUE si les 3 derniers mots en attente
+  //    correspondent, dans l'ordre, à 3 mots consécutifs attendus à venir —
+  //    un seul mot en commun est trop fréquent dans le Coran pour être fiable.
+  bufferEnAttente.push(motNorm);
+  if (bufferEnAttente.length > 12) bufferEnAttente.shift();
+  if (bufferEnAttente.length < TAILLE_NGRAM_RESYNC) return;
+
+  const derniersMots = bufferEnAttente.slice(-TAILLE_NGRAM_RESYNC);
+  const limite = Math.min(pointeurMots + FENETRE_RECHERCHE, banqueMots.length - TAILLE_NGRAM_RESYNC + 1);
+  for (let k = pointeurMots + 1; k < limite; k++) {
+    let correspond = true;
+    for (let j = 0; j < TAILLE_NGRAM_RESYNC; j++) {
+      if (!wordsMatch(banqueMots[k + j].normalise, derniersMots[j])) { correspond = false; break; }
+    }
+    if (correspond) {
+      traiterEcart(k, k + TAILLE_NGRAM_RESYNC - 1);
+      bufferEnAttente = [];
+      return;
+    }
+  }
+  // 3. aucune séquence de confirmation trouvée pour l'instant : on continue
+  //    d'accumuler (le mot reste "en attente" tant qu'aucune suite fiable
+  //    n'est repérée).
+}
+
+function traiterEcart(indexDebut, indexFin) {
+  const ecart = indexDebut - pointeurMots;
+  const motsSautes = banqueMots.slice(pointeurMots, indexDebut);
+  const versetRef = motsSautes.length ? motsSautes[0].v : banqueMots[indexDebut].v;
+
+  if (ecart < SEUIL_IGNORER) {
+    // faute de transcription probable : resynchronisation silencieuse
+  } else if (ecart < SEUIL_ERREUR) {
+    suspectsSession.push({ verset: versetRef, mots: motsSautes.map(function(m) { return m.texte; }).join(' ') });
+  } else {
+    erreursSession.push({ verset: versetRef, mots: motsSautes.map(function(m) { return m.texte; }).join(' ') });
+    jouerSonErreur();
+    montrerAide();
+  }
+
+  pointeurMots = indexFin + 1;
+  majAffichageRecitation();
+}
+
+// ---- Effet sonore (bip généré, pas de fichier externe requis) ----
+function jouerSonErreur() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 440;
+    gain.gain.setValueAtTime(0.001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+  } catch (e) {}
+}
+
+// ---- Aide : révèle la suite quand on est bloqué ----
+function montrerAide() {
+  const panneau = document.getElementById('aide-suite');
+  const prochains = banqueMots.slice(pointeurMots, pointeurMots + 8).map(function(m) { return m.texte; }).join(' ');
+  panneau.textContent = prochains || '(fin de la sourate)';
+  panneau.classList.remove('hidden');
+  clearTimeout(panneau._timeoutMasquage);
+  panneau._timeoutMasquage = setTimeout(function() { panneau.classList.add('hidden'); }, 6000);
+}
+
+// ---- Affichage : texte déjà récité visible, suite cachée (mode mémorisation) ----
+function majAffichageRecitation() {
+  const conteneur = document.getElementById('recitation-texte');
+  conteneur.innerHTML = '';
+  let versetCourant = null;
+  let spanVerset = null;
+
+  for (let i = 0; i < pointeurMots; i++) {
+    const m = banqueMots[i];
+    if (m.v !== versetCourant) {
+      if (spanVerset) {
+        conteneur.appendChild(spanVerset);
+        const num = document.createElement('span');
+        num.className = 'num-verset-mushaf';
+        num.textContent = versetCourant;
+        conteneur.appendChild(num);
+        conteneur.appendChild(document.createTextNode(' '));
+      }
+      versetCourant = m.v;
+      spanVerset = document.createElement('span');
+      spanVerset.textContent = '';
+    }
+    spanVerset.textContent += (spanVerset.textContent ? ' ' : '') + m.texte;
+  }
+  if (spanVerset) {
+    conteneur.appendChild(spanVerset);
+    const num = document.createElement('span');
+    num.className = 'num-verset-mushaf';
+    num.textContent = versetCourant;
+    conteneur.appendChild(num);
+  }
+
+  const curseur = document.createElement('span');
+  curseur.className = 'curseur-recitation';
+  curseur.textContent = ' ● ';
+  conteneur.appendChild(curseur);
+  conteneur.scrollTop = conteneur.scrollHeight;
+
+  document.getElementById('recitation-progress').textContent = pointeurMots + ' / ' + banqueMots.length + ' mots';
+
+  if (pointeurMots >= banqueMots.length) {
+    terminerRecitation();
+  }
+}
+
+// ---- Fin de session : bilan ----
+function terminerRecitation() {
+  arreterEcoute();
+  document.getElementById('screen-recitation').classList.add('hidden');
+  afficherBilanRecitation();
+}
+
+function afficherBilanRecitation() {
+  const conteneur = document.getElementById('liste-bilan');
+  conteneur.innerHTML = '';
+
+  if (erreursSession.length === 0 && suspectsSession.length === 0) {
+    conteneur.innerHTML = '<div class="vide-msg">Aucune anomalie détectée. Excellente récitation !</div>';
+  } else {
+    if (erreursSession.length) {
+      const titre = document.createElement('h1');
+      titre.textContent = 'Erreurs probables';
+      conteneur.appendChild(titre);
+      erreursSession.forEach(function(item) { ajouterLigneBilan(conteneur, 'bilan-erreur', item); });
+    }
+    if (suspectsSession.length) {
+      const titre = document.createElement('h1');
+      titre.textContent = 'À vérifier (doute de transcription)';
+      conteneur.appendChild(titre);
+      suspectsSession.forEach(function(item) { ajouterLigneBilan(conteneur, 'bilan-suspect', item); });
+    }
+  }
+
+  document.getElementById('screen-bilan').classList.remove('hidden');
+}
+
+function ajouterLigneBilan(conteneur, classe, item) {
+  const div = document.createElement('div');
+  div.className = 'ligne-bilan ' + classe;
+  div.textContent = 'Verset ' + item.verset + ' : ' + item.mots;
+  conteneur.appendChild(div);
 }
 
 // ---- INITIALISATION ----
