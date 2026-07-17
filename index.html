@@ -532,6 +532,7 @@ let sourateEnCours = null;
 let banqueMots = [];
 let pointeurMots = 0;
 let bufferEnAttente = [];
+let bufferBrutEnAttente = [];
 let suspectsSession = [];
 let erreursSession = [];
 let reconnaissance = null;
@@ -1145,6 +1146,7 @@ function demarrerRecitation(sourateId, versetDepart) {
   banqueMots = construireBanqueMots(sourateEnCours, versetDepart);
   pointeurMots = 0;
   bufferEnAttente = [];
+  bufferBrutEnAttente = [];
   suspectsSession = [];
   erreursSession = [];
 
@@ -1371,6 +1373,10 @@ const TAILLE_NGRAM_RESYNC = 3;  // nb de mots CONSÉCUTIFS requis pour valider u
                                  // serait jamais détectée. 3 mots d'affilée est beaucoup plus fiable)
 const SEUIL_IGNORER = 5;        // écart < 5 mots : faute de transcription, ignorée
 const SEUIL_ERREUR = 10;        // écart >= 10 mots : vraie erreur déclarée
+const SEUIL_MOTS_INCONNUS = 8;  // mots non reconnus d'affilée sans resync -> alerte
+                                 // (filet de sécurité : couvre le cas où le récitant
+                                 // part sur un texte totalement différent, où aucun
+                                 // n-gramme de resynchronisation ne sera jamais trouvé)
 
 function traiterMotEntendu(motBrut) {
   if (!sourateEnCours || pointeurMots >= banqueMots.length) return;
@@ -1382,6 +1388,7 @@ function traiterMotEntendu(motBrut) {
   //    considère tout ce qui était en attente comme du bruit de transcription.
   if (wordsMatch(banqueMots[pointeurMots].normalise, motNorm)) {
     bufferEnAttente = [];
+    bufferBrutEnAttente = [];
     pointeurMots++;
     majAffichageRecitation();
     return;
@@ -1392,7 +1399,8 @@ function traiterMotEntendu(motBrut) {
   //    correspondent, dans l'ordre, à 3 mots consécutifs attendus à venir —
   //    un seul mot en commun est trop fréquent dans le Coran pour être fiable.
   bufferEnAttente.push(motNorm);
-  if (bufferEnAttente.length > 12) bufferEnAttente.shift();
+  bufferBrutEnAttente.push(motBrut);
+  if (bufferEnAttente.length > 12) { bufferEnAttente.shift(); bufferBrutEnAttente.shift(); }
   if (bufferEnAttente.length < TAILLE_NGRAM_RESYNC) return;
 
   const derniersMots = bufferEnAttente.slice(-TAILLE_NGRAM_RESYNC);
@@ -1403,27 +1411,49 @@ function traiterMotEntendu(motBrut) {
       if (!wordsMatch(banqueMots[k + j].normalise, derniersMots[j])) { correspond = false; break; }
     }
     if (correspond) {
-      traiterEcart(k, k + TAILLE_NGRAM_RESYNC - 1);
+      // les mots RÉELLEMENT dits = tout le buffer sauf les mots de
+      // confirmation finaux (ceux-là appartiennent au texte correct retrouvé,
+      // ce ne sont pas des mots fautés)
+      const motsReellementDits = bufferBrutEnAttente.slice(0, bufferBrutEnAttente.length - TAILLE_NGRAM_RESYNC);
+      traiterEcart(k, k + TAILLE_NGRAM_RESYNC - 1, motsReellementDits);
       bufferEnAttente = [];
+      bufferBrutEnAttente = [];
       return;
     }
   }
-  // 3. aucune séquence de confirmation trouvée pour l'instant : on continue
-  //    d'accumuler (le mot reste "en attente" tant qu'aucune suite fiable
-  //    n'est repérée).
+
+  // 3. aucune séquence de confirmation trouvée pour l'instant. Normalement on
+  //    continue d'accumuler (le mot reste "en attente" tant qu'aucune suite
+  //    fiable n'est repérée) — SAUF si ça traîne depuis trop longtemps : dans
+  //    ce cas le récitant est probablement parti sur un texte totalement
+  //    différent (aucun n-gramme de resync ne sera jamais retrouvé), donc on
+  //    déclare une alerte "hors texte" directement, sans bouger le pointeur,
+  //    pour ne pas laisser l'app silencieuse indéfiniment.
+  if (bufferEnAttente.length >= SEUIL_MOTS_INCONNUS) {
+    erreursSession.push({
+      verset: banqueMots[pointeurMots] ? banqueMots[pointeurMots].v : '?',
+      mots: '(hors texte — mot attendu non retrouvé)',
+      dits: bufferBrutEnAttente.join(' ')
+    });
+    jouerSonErreur();
+    montrerAide();
+    bufferEnAttente = [];
+    bufferBrutEnAttente = [];
+  }
 }
 
-function traiterEcart(indexDebut, indexFin) {
+function traiterEcart(indexDebut, indexFin, motsEntendus) {
   const ecart = indexDebut - pointeurMots;
   const motsSautes = banqueMots.slice(pointeurMots, indexDebut);
   const versetRef = motsSautes.length ? motsSautes[0].v : banqueMots[indexDebut].v;
+  const dits = (motsEntendus && motsEntendus.length) ? motsEntendus.join(' ') : null;
 
   if (ecart < SEUIL_IGNORER) {
     // faute de transcription probable : resynchronisation silencieuse
   } else if (ecart < SEUIL_ERREUR) {
-    suspectsSession.push({ verset: versetRef, mots: motsSautes.map(function(m) { return m.texte; }).join(' ') });
+    suspectsSession.push({ verset: versetRef, mots: motsSautes.map(function(m) { return m.texte; }).join(' '), dits: dits });
   } else {
-    erreursSession.push({ verset: versetRef, mots: motsSautes.map(function(m) { return m.texte; }).join(' ') });
+    erreursSession.push({ verset: versetRef, mots: motsSautes.map(function(m) { return m.texte; }).join(' '), dits: dits });
     jouerSonErreur();
     montrerAide();
   }
@@ -1538,7 +1568,11 @@ function afficherBilanRecitation() {
 function ajouterLigneBilan(conteneur, classe, item) {
   const div = document.createElement('div');
   div.className = 'ligne-bilan ' + classe;
-  div.textContent = 'Verset ' + item.verset + ' : ' + item.mots;
+  let texte = 'Verset ' + item.verset + ' : attendu « ' + item.mots + ' »';
+  if (item.dits) {
+    texte += ' — vous avez dit : « ' + item.dits + ' »';
+  }
+  div.textContent = texte;
   conteneur.appendChild(div);
 }
 
