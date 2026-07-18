@@ -1323,6 +1323,28 @@ let derniersMotsNatifsEnvoyes = 0;
 // répétitions immédiates d'un cycle court (1 à 4 mots) et on n'en garde
 // qu'une seule occurrence avant de transmettre au jugement, pour ne pas
 // inonder le bilan de fausses erreurs pendant les phases de silence.
+// ---- Dédoublement global de la transcription ----
+// Motif trouvé via le bilan : le plugin natif renvoie parfois la phrase
+// reconnue ENTIÈRE, dupliquée deux fois d'un bloc (les 4 premiers mots
+// identiques aux 4 derniers, ou les 6 premiers aux 6 derniers, etc. — la
+// taille du dédoublement grandit avec la phrase). Ce n'est pas un cycle
+// court (couvert par supprimerBouclesHallucinees ci-dessous) : c'est TOUTE
+// la liste qui est répétée une fois. On le détecte et le réduit, de façon
+// récursive au cas où le résultat serait lui-même encore doublé.
+function collapserDoublonGlobal(mots) {
+  let m = mots;
+  let continuer = true;
+  while (continuer && m.length > 0 && m.length % 2 === 0) {
+    const moitie = m.length / 2;
+    if (m.slice(0, moitie).join('\u0001') === m.slice(moitie).join('\u0001')) {
+      m = m.slice(0, moitie);
+    } else {
+      continuer = false;
+    }
+  }
+  return m;
+}
+
 function supprimerBouclesHallucinees(mots) {
   const resultat = [];
   let i = 0;
