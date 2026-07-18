@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -1352,9 +1353,20 @@ async function demarrerEcouteNative() {
       reinitialiserTimerSilence();
       const txt = (data && data.matches && data.matches[0]) ? data.matches[0] : '';
       const mots = txt.trim().split(/\s+/).filter(Boolean);
-      // Le plugin renvoie la transcription COMPLÈTE de l'énoncé en cours à
-      // chaque appel (pas mot par mot comme le moteur navigateur) : on ne
-      // traite que les mots NOUVEAUX par rapport au dernier appel.
+      // BUG TROUVÉ VIA LE FICHIER DE BILAN : le plugin natif ne renvoie pas
+      // toujours une transcription qui grandit sans fin — après chaque
+      // pause, il redémarre souvent son écoute en interne et repart d'une
+      // transcription COURTE depuis le début du nouvel énoncé. Si on garde
+      // l'ancien compteur (élevé) dans ce cas, on découpe la nouvelle
+      // transcription au mauvais endroit et on envoie des mots décalés au
+      // jugement — d'où les fausses erreurs "hors texte" en boucle malgré
+      // une récitation juste. On détecte ce redémarrage (la transcription
+      // devient plus courte que ce qu'on avait déjà compté) et on repart
+      // de zéro sur ce nouvel énoncé.
+      if (mots.length < derniersMotsNatifsEnvoyes) {
+        console.log('[DEBUG micro natif] transcription raccourcie (' + mots.length + ' < ' + derniersMotsNatifsEnvoyes + ') — nouvel énoncé détecté, compteur remis à zéro');
+        derniersMotsNatifsEnvoyes = 0;
+      }
       if (mots.length > derniersMotsNatifsEnvoyes) {
         mots.slice(derniersMotsNatifsEnvoyes).forEach(traiterMotEntendu);
         derniersMotsNatifsEnvoyes = mots.length;
