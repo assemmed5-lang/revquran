@@ -389,6 +389,7 @@
     <span class="topbar-page" id="recitation-progress"></span>
   </div>
   <div id="statut-ecoute" class="statut-ecoute">🎙️ Écoute en cours…</div>
+  <div id="mot-entendu-live" class="statut-ecoute" style="color:#a67c3d;min-height:18px;"></div>
   <div id="recitation-texte" class="recitation-texte"></div>
   <div id="aide-suite" class="aide-suite hidden"></div>
   <div class="recitation-actions">
@@ -1128,19 +1129,12 @@ function wordsMatch(nw, hw) {
 }
 
 // ---- Construction de la banque de mots (à partir du verset de départ) ----
-// Marques de pause/dizainage coraniques (waqf ۛ ۖ ۗ ۚ ۜ..., dizainage ۞, etc.)
-// qui apparaissent comme "mots" séparés par des espaces dans le texte mais qui
-// ne sont jamais prononcées : il ne faut jamais les exiger de la reconnaissance
-// vocale, sinon le pointeur reste bloqué dessus indéfiniment.
-const RE_MARQUE_NON_PRONONCEE = /^[\u06D6-\u06ED\u06DE]+$/;
-
 function construireBanqueMots(sourate, versetDepart) {
   const versets = listeVersetsSourate(sourate).filter(function(v) { return v >= versetDepart; });
   const banque = [];
   versets.forEach(function(v) {
     const texte = texteDuVerset(sourate, v);
     texte.trim().split(/\s+/).filter(Boolean).forEach(function(m) {
-      if (RE_MARQUE_NON_PRONONCEE.test(m)) return; // ex: ۛ, ۞ — jamais un vrai mot
       banque.push({ v: v, texte: m, normalise: norm(m) });
     });
   });
@@ -1156,10 +1150,6 @@ function demarrerRecitation(sourateId, versetDepart) {
   bufferBrutEnAttente = [];
   suspectsSession = [];
   erreursSession = [];
-  texteEntenduGlobal = '';
-  nbMotsDejaExtraits = 0;
-  sessionFinal = '';
-  sessionMeilleur = '';
 
   document.getElementById('recitation-titre').textContent = 'سورة ' + sourateEnCours.nom;
   document.getElementById('screen-choix-depart').classList.add('hidden');
@@ -1184,40 +1174,9 @@ function quitterRecitation() {
 // androidScheme:'https' (origine sécurisée). Le plugin natif Capacitor n'est
 // utilisé qu'en dernier recours si l'API navigateur est absente.
 // ══════════════════════════════════════════════
-// ══════════════════════════════════════════════
-// ARCHITECTURE À 3 COUCHES (inspirée de l'app tilawa, qui est stable) :
-//
-//  1) CAPTURE   : une session webkitSpeechRecognition, dont le texte reconnu
-//                 (sessionMeilleur) ne peut QUE grandir pendant sa durée de vie,
-//                 jamais rétrécir/repartir de zéro tant qu'elle est active.
-//  2) ACCUMULATION : à chaque redémarrage du moteur (onend), le meilleur texte
-//                 de la session qui se termine est figé dans un accumulateur
-//                 GLOBAL (texteEntenduGlobal) qui, lui, ne redémarre JAMAIS.
-//                 Un curseur (nbMotsDejaExtraits) garantit qu'on ne pousse
-//                 vers la comparaison QUE les mots réellement nouveaux.
-//  3) COMPARAISON : traiterMotEntendu() (inchangée) — reçoit un flux de mots
-//                 strictement croissant, un par un, jamais de doublon/écho.
-//
-// Avant cette refonte, comptesMotsParIndex était remis à zéro à CHAQUE
-// redémarrage du moteur (onstart), donc l'app "oubliait" ce qu'elle avait
-// déjà transmis à la comparaison : au redémarrage suivant, des mots déjà
-// traités pouvaient être retransmis (dans le désordre, dupliqués...),
-// produisant des rafales de fausses erreurs. Avec l'accumulateur global,
-// ce problème est éliminé structurellement : impossible de repousser un mot
-// déjà compté, quel que soit le nombre de redémarrages du moteur.
-// ══════════════════════════════════════════════
-let sessionFinal = '';     // transcriptions marquées isFinal par le moteur, session en cours
-let sessionMeilleur = '';  // sessionFinal + résultat intermédiaire courant (ne rétrécit jamais)
-let texteEntenduGlobal = '';  // accumulateur global, ne redémarre jamais
-let nbMotsDejaExtraits = 0;   // curseur : nb de mots déjà transmis à la comparaison
+let interimTexteCourant = '';
 
-function pousserTexteEntendu(texteComplet) {
-  const mots = texteComplet.trim().split(/\s+/).filter(Boolean);
-  if (mots.length > nbMotsDejaExtraits) {
-    mots.slice(nbMotsDejaExtraits).forEach(traiterMotEntendu);
-    nbMotsDejaExtraits = mots.length;
-  }
-}
+let echecsConsecutifsSansDemarrage = 0; // compte les redémarrages où onstart n'a JAMAIS été atteint
 
 function creerRecognizer() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1225,31 +1184,26 @@ function creerRecognizer() {
   r.lang = 'ar-SA';
   r.continuous = true;
   r.interimResults = true;
-  r.maxAlternatives = 1;
-  sessionFinal = '';
-  sessionMeilleur = '';
+  r.maxAlternatives = 3;
+  let aReellementDemarre = false; // propre à CETTE instance précise
   r.onstart = function() {
+    aReellementDemarre = true;
+    echecsConsecutifsSansDemarrage = 0;
+    console.log('[DEBUG micro] onstart — le moteur a démarré et capte l\'audio');
     const bouton = document.getElementById('btn-toggle-ecoute');
     if (bouton) bouton.classList.add('ecoute-active');
   };
   r.onresult = function(event) {
-    reinitialiserTimerSilence();
-    let interim = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const resultat = event.results[i];
-      if (resultat.isFinal) sessionFinal += resultat[0].transcript + ' ';
-      else interim += resultat[0].transcript;
-    }
-    const candidat = (sessionFinal + interim).trim();
-    // Ne jamais laisser sessionMeilleur rétrécir (garde contre un résultat
-    // intermédiaire plus court qui écraserait un résultat déjà plus complet).
-    if (candidat.length >= sessionMeilleur.length) sessionMeilleur = candidat;
-    const texteComplet = (texteEntenduGlobal + ' ' + sessionMeilleur).trim();
-    pousserTexteEntendu(texteComplet);
+    console.log('[DEBUG micro] onresult reçu, resultIndex=' + event.resultIndex + ', nb résultats=' + event.results.length);
+    traiterResultatVocal(event);
   };
+  r.onaudiostart = function() { console.log('[DEBUG micro] onaudiostart — capture audio effective'); };
+  r.onsoundstart = function() { console.log('[DEBUG micro] onsoundstart — du son est détecté'); };
+  r.onspeechstart = function() { console.log('[DEBUG micro] onspeechstart — de la parole est détectée'); };
   r.onerror = function(e) {
-    // "no-speech" et "aborted" sont normaux (silence, ou arrêt/redémarrage
-    // volontaire) : pas de vraies erreurs, on ne les affiche pas.
+    // DEBUG TEMPORAIRE : on log TOUT, y compris ce qu'on ignore normalement
+    // (no-speech, aborted), pour voir exactement ce qui se passe en boucle.
+    console.warn('[DEBUG micro] onerror — type: ' + e.error + (e.message ? (' — message: ' + e.message) : ''));
     if (e.error === 'not-allowed' || e.error === 'audio-capture') {
       // Refus définitif de permission : inutile (et néfaste) de continuer à
       // boucler indéfiniment sur des redémarrages qui échoueront tous.
@@ -1258,51 +1212,86 @@ function creerRecognizer() {
       if (bouton) { bouton.textContent = "🎙️ Démarrer l'écoute"; bouton.classList.remove('ecoute-active'); }
       const statut = document.getElementById('statut-ecoute');
       if (statut) statut.textContent = 'Micro refusé — vérifie les permissions de l\'application';
-    } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
-      console.warn('Erreur reco vocale', e.error);
     }
   };
-  r.onend = gererFinReconnaissance;
+  r.onend = function() {
+    // CLÉ DU BUG TROUVÉ VIA LA CONSOLE : tant que la permission n'est pas
+    // encore tranchée (popup affichée mais pas encore cliquée), start()
+    // échoue immédiatement — onend se déclenche SANS que onstart n'ait
+    // jamais eu lieu. Avant, on relançait instantanément (0ms) à chaque
+    // fois, ce qui spammait start() des milliers de fois par seconde
+    // pendant que la popup était encore ouverte — assez pour empêcher
+    // Chrome de traiter proprement le clic sur "Allow" lui-même.
+    if (!aReellementDemarre) echecsConsecutifsSansDemarrage++;
+    console.log('[DEBUG micro] onend — le moteur s\'est arrêté (avait réellement démarré : ' + aReellementDemarre + '), échecs consécutifs sans démarrage : ' + echecsConsecutifsSansDemarrage);
+    gererFinReconnaissance();
+  };
   return r;
 }
 
 function gererFinReconnaissance() {
-  // Geler le meilleur texte connu de la session qui se termine dans
-  // l'accumulateur global, AVANT de perdre cette session. C'est la clé de
-  // la stabilité : peu importe ce qui se passe ensuite (nouvelle instance,
-  // nouveau cycle du moteur...), ce texte ne disparaît jamais.
-  if (sessionMeilleur.trim().length > 0) {
-    texteEntenduGlobal = (texteEntenduGlobal + ' ' + sessionMeilleur).trim();
+  // webkitSpeechRecognition s'arrête seule après un court silence : ce n'est
+  // PAS la fin de la session d'écoute, juste la fin d'un cycle interne du
+  // moteur. On fige d'abord le texte "interim" pas encore finalisé pour ne
+  // perdre aucun mot, puis on relance (après un court délai, jamais
+  // instantanément — voir plus bas).
+  if (interimTexteCourant.trim()) {
+    interimTexteCourant.trim().split(/\s+/).filter(Boolean).forEach(traiterMotEntendu);
+    interimTexteCourant = '';
   }
-  if (!ecouteActive) return;
-  // Toujours une INSTANCE NEUVE à chaque redémarrage (comme tilawa) : une
-  // instance webkitSpeechRecognition déjà utilisée est mal spécifiée pour la
-  // réutilisation et peut se bloquer silencieusement (aucune exception levée,
-  // mais plus aucun audio réellement capté) — c'est ce qui provoquait les
-  // cycles infinis d'ouverture/fermeture sans transcription sur PC.
-  try {
-    reconnaissance = creerRecognizer();
-    reconnaissance.start();
-  } catch (e) {
-    setTimeout(function() {
-      if (!ecouteActive) return;
-      try { reconnaissance = creerRecognizer(); reconnaissance.start(); } catch (e2) {}
-    }, 150);
+  if (!ecouteActive) { console.log('[DEBUG micro] ecouteActive=false, on ne redémarre pas'); return; }
+
+  // Filet de sécurité : si le moteur échoue à démarrer réellement (jamais
+  // onstart) plusieurs fois de suite, la permission n'est très probablement
+  // toujours pas accordée (popup pas encore répondue, ou refusée) — on
+  // arrête complètement de boucler au lieu de spammer indéfiniment, et on
+  // informe clairement l'utilisateur.
+  if (echecsConsecutifsSansDemarrage >= 4) {
+    console.warn('[DEBUG micro] trop d\'échecs consécutifs sans démarrage réel — arrêt automatique des tentatives');
+    ecouteActive = false;
+    const bouton = document.getElementById('btn-toggle-ecoute');
+    if (bouton) { bouton.textContent = "🎙️ Démarrer l'écoute"; bouton.classList.remove('ecoute-active'); }
+    const statut = document.getElementById('statut-ecoute');
+    if (statut) statut.textContent = 'Le micro ne démarre pas — vérifiez que la permission a bien été accordée (icône 🎤 dans la barre d\'adresse), puis appuyez de nouveau sur le bouton micro.';
+    return;
   }
+
+  // JAMAIS de redémarrage instantané (0ms) : un délai minimum laisse le
+  // temps à Chrome de traiter correctement un clic sur la popup de
+  // permission en cours, au lieu de le noyer sous des appels start() en
+  // rafale. Le délai grandit légèrement à chaque échec consécutif.
+  const delai = 350 + echecsConsecutifsSansDemarrage * 300;
+  setTimeout(function() {
+    if (!ecouteActive) return;
+    try {
+      reconnaissance = creerRecognizer();
+      reconnaissance.start();
+      console.log('[DEBUG micro] redémarrage (après ' + delai + 'ms) : start() appelé avec succès');
+    } catch (e) {
+      console.warn('[DEBUG micro] redémarrage : start() a levé une exception — ' + e.message);
+      echecsConsecutifsSansDemarrage++;
+      setTimeout(function() {
+        if (!ecouteActive) return;
+        try { reconnaissance = creerRecognizer(); reconnaissance.start(); } catch (e2) {}
+      }, 500);
+    }
+  }, delai);
 }
 
 async function demarrerEcoute() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  console.log('[DEBUG micro] demarrerEcoute() appelé — SR disponible: ' + !!SR);
   if (!SR) {
     await demarrerEcouteNative();
     return;
   }
-  texteEntenduGlobal = '';
-  nbMotsDejaExtraits = 0;
+  interimTexteCourant = '';
   ecouteActive = true;
+  echecsConsecutifsSansDemarrage = 0;
   try {
     reconnaissance = creerRecognizer();
     reconnaissance.start();
+    console.log('[DEBUG micro] premier start() appelé — la popup de permission devrait apparaître maintenant si ce n\'est pas déjà autorisé');
     // Filet de sécurité : toutes les 500ms on vérifie que le moteur tourne
     // toujours ; s'il s'est arrêté sans déclencher onend correctement
     // (bug connu de certaines WebView), on le relance nous-mêmes.
@@ -1416,6 +1405,29 @@ function reinitialiserTimerSilence() {
   }, 7000);
 }
 
+function traiterResultatVocal(event) {
+  reinitialiserTimerSilence();
+  let interim = '';
+  for (let i = event.resultIndex; i < event.results.length; i++) {
+    const resultat = event.results[i];
+    if (resultat.isFinal) {
+      resultat[0].transcript.trim().split(/\s+/).filter(Boolean).forEach(traiterMotEntendu);
+    } else {
+      interim += resultat[0].transcript;
+    }
+  }
+  interimTexteCourant = interim;
+  // Ajout pur (aucune incidence sur ce qui précède) : affichage instantané
+  // du dernier mot capté, juste pour le retour visuel immédiat.
+  const apercu = interim || interimTexteCourant;
+  afficherMotEnDirect(apercu.trim().split(/\s+/).filter(Boolean).slice(-3).join(' '));
+}
+
+function afficherMotEnDirect(texte) {
+  const el = document.getElementById('mot-entendu-live');
+  if (el) el.textContent = texte ? ('👂 ' + texte) : '';
+}
+
 // ---- Cœur de l'algorithme : seuils de sensibilité ----
 const FENETRE_RECHERCHE = 25;   // nb de mots attendus explorés pour resynchroniser
 const TAILLE_NGRAM_RESYNC = 3;  // nb de mots CONSÉCUTIFS requis pour valider une resync
@@ -1441,7 +1453,6 @@ function traiterMotEntendu(motBrut) {
     bufferEnAttente = [];
     bufferBrutEnAttente = [];
     pointeurMots++;
-    cacherAide();
     majAffichageRecitation();
     return;
   }
@@ -1500,8 +1511,6 @@ function traiterEcart(indexDebut, indexFin, motsEntendus) {
   const versetRef = motsSautes.length ? motsSautes[0].v : banqueMots[indexDebut].v;
   const dits = (motsEntendus && motsEntendus.length) ? motsEntendus.join(' ') : null;
 
-  cacherAide();
-
   if (ecart < SEUIL_IGNORER) {
     // faute de transcription probable : resynchronisation silencieuse
   } else if (ecart < SEUIL_ERREUR) {
@@ -1517,35 +1526,19 @@ function traiterEcart(indexDebut, indexFin, motsEntendus) {
 }
 
 // ---- Effet sonore (bip généré, pas de fichier externe requis) ----
-let _audioCtxPartagee = null;
 function jouerSonErreur() {
   try {
-    if (!_audioCtxPartagee) {
-      _audioCtxPartagee = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    const ctx = _audioCtxPartagee;
-    const lancerBip = function(freq, decalage) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'square';
-      osc.frequency.value = freq;
-      const debut = ctx.currentTime + decalage;
-      gain.gain.setValueAtTime(0.0001, debut);
-      gain.gain.exponentialRampToValueAtTime(0.9, debut + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, debut + 0.28);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(debut);
-      osc.stop(debut + 0.3);
-    };
-    const jouer = function() {
-      lancerBip(660, 0);
-      lancerBip(660, 0.32);
-    };
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(jouer).catch(jouer);
-    } else {
-      jouer();
-    }
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 440;
+    gain.gain.setValueAtTime(0.001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
   } catch (e) {}
 }
 
@@ -1555,10 +1548,8 @@ function montrerAide() {
   const prochains = banqueMots.slice(pointeurMots, pointeurMots + 8).map(function(m) { return m.texte; }).join(' ');
   panneau.textContent = prochains || '(fin de la sourate)';
   panneau.classList.remove('hidden');
-}
-
-function cacherAide() {
-  document.getElementById('aide-suite').classList.add('hidden');
+  clearTimeout(panneau._timeoutMasquage);
+  panneau._timeoutMasquage = setTimeout(function() { panneau.classList.add('hidden'); }, 6000);
 }
 
 // ---- Affichage : texte déjà récité visible, suite cachée (mode mémorisation) ----
