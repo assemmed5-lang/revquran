@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -1315,6 +1314,43 @@ async function demarrerEcoute() {
 // ---- Plugin natif Capacitor : dernier recours UNIQUEMENT (si webkitSpeechRecognition est absent) ----
 let derniersMotsNatifsEnvoyes = 0;
 
+// ---- Filtre anti-hallucination du moteur natif ----
+// Certains petits moteurs de reconnaissance embarqués (Android on-device)
+// se bloquent parfois à répéter en boucle une courte séquence de mots
+// pendant un silence ou un son ambigu (ex: "مدمر ربهم مدمر ربهم..."), un
+// mot inventé qui n'existe même pas dans le Coran. Ce n'est pas notre
+// pointeur qui dérape ici, c'est le moteur qui hallucine — on détecte ces
+// répétitions immédiates d'un cycle court (1 à 4 mots) et on n'en garde
+// qu'une seule occurrence avant de transmettre au jugement, pour ne pas
+// inonder le bilan de fausses erreurs pendant les phases de silence.
+function supprimerBouclesHallucinees(mots) {
+  const resultat = [];
+  let i = 0;
+  while (i < mots.length) {
+    let colle = false;
+    for (let cycle = 1; cycle <= 4 && !colle; cycle++) {
+      if (i + cycle * 2 <= mots.length) {
+        const a = mots.slice(i, i + cycle).join(' ');
+        const b = mots.slice(i + cycle, i + cycle * 2).join(' ');
+        if (a === b) {
+          resultat.push.apply(resultat, mots.slice(i, i + cycle));
+          let j = i + cycle;
+          while (j + cycle <= mots.length && mots.slice(j, j + cycle).join(' ') === a) {
+            j += cycle;
+          }
+          i = j;
+          colle = true;
+        }
+      }
+    }
+    if (!colle) {
+      resultat.push(mots[i]);
+      i++;
+    }
+  }
+  return resultat;
+}
+
 async function demarrerEcouteNative() {
   const SRPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition;
   if (!SRPlugin) {
@@ -1368,7 +1404,8 @@ async function demarrerEcouteNative() {
         derniersMotsNatifsEnvoyes = 0;
       }
       if (mots.length > derniersMotsNatifsEnvoyes) {
-        mots.slice(derniersMotsNatifsEnvoyes).forEach(traiterMotEntendu);
+        const nouveauxMots = supprimerBouclesHallucinees(mots.slice(derniersMotsNatifsEnvoyes));
+        nouveauxMots.forEach(traiterMotEntendu);
         derniersMotsNatifsEnvoyes = mots.length;
       }
     });
