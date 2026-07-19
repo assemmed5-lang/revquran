@@ -354,6 +354,7 @@
   <button class="menu-btn" onclick="ouvrirListeSourates('consultation')">Consulter les erreurs</button>
   <button class="menu-btn secondaire" onclick="ouvrirListeSourates('entree')">Introduire des nouvelles erreurs</button>
   <button class="menu-btn tertiaire" onclick="ouvrirListeSourates('recitation')">🎙️ Réciter (écoute active)</button>
+  <div style="text-align:center; font-family:sans-serif; font-size:12px; color:#999; margin-top:20px;">build: FIX4-debug-natif-brut</div>
 </div>
 
 <div class="screen hidden" id="screen-liste-sourates">
@@ -390,6 +391,8 @@
   </div>
   <div id="statut-ecoute" class="statut-ecoute">🎙️ Écoute en cours…</div>
   <div id="mot-entendu-live" class="statut-ecoute" style="color:#a67c3d;min-height:18px;"></div>
+  <button onclick="toggleDebugNatif()" style="font-size:11px; padding:2px 8px; margin:2px auto; display:block; background:#eee; border:1px solid #ccc; border-radius:4px;">debug natif</button>
+  <div id="debug-natif" class="hidden" style="max-height:120px; overflow-y:auto; background:#111; color:#0f0; font-family:monospace; font-size:11px; padding:6px; border-radius:4px; direction:ltr; text-align:left;"></div>
   <div id="recitation-texte" class="recitation-texte"></div>
   <div id="aide-suite" class="aide-suite hidden"></div>
   <div class="recitation-actions">
@@ -1331,6 +1334,25 @@ let derniersMotsNatifsEnvoyes = 0;
 // court (couvert par supprimerBouclesHallucinees ci-dessous) : c'est TOUTE
 // la liste qui est répétée une fois. On le détecte et le réduit, de façon
 // récursive au cas où le résultat serait lui-même encore doublé.
+// ---- Panneau de débogage visible (pas besoin d'USB/chrome://inspect) ----
+// Affiche EXACTEMENT ce que le plugin natif renvoie à chaque appel, avant
+// tout traitement (dédoublement, filtre anti-hallucination, etc.) — pour
+// diagnostiquer sur la vraie donnée plutôt que sur un bilan déjà filtré.
+let _logDebugNatif = [];
+function toggleDebugNatif() {
+  document.getElementById('debug-natif').classList.toggle('hidden');
+}
+function afficherDebugNatif(txt) {
+  const heure = new Date().toISOString().substr(11, 12);
+  _logDebugNatif.push(heure + ' | (' + txt.trim().split(/\s+/).filter(Boolean).length + ' mots) ' + txt);
+  if (_logDebugNatif.length > 60) _logDebugNatif.shift();
+  const panneau = document.getElementById('debug-natif');
+  if (panneau) {
+    panneau.textContent = _logDebugNatif.join('\n');
+    panneau.scrollTop = panneau.scrollHeight;
+  }
+}
+
 function collapserDoublonGlobal(mots) {
   let m = mots;
   let continuer = true;
@@ -1410,6 +1432,7 @@ async function demarrerEcouteNative() {
     window._recitationListener = await SRPlugin.addListener('partialResults', function(data) {
       reinitialiserTimerSilence();
       const txt = (data && data.matches && data.matches[0]) ? data.matches[0] : '';
+      afficherDebugNatif(txt);
       const motsBruts = txt.trim().split(/\s+/).filter(Boolean);
       // Toujours dédoublonner globalement AVANT toute autre logique, pour
       // que le compteur (derniersMotsNatifsEnvoyes) reste cohérent d'un
