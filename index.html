@@ -354,7 +354,7 @@
   <button class="menu-btn" onclick="ouvrirListeSourates('consultation')">Consulter les erreurs</button>
   <button class="menu-btn secondaire" onclick="ouvrirListeSourates('entree')">Introduire des nouvelles erreurs</button>
   <button class="menu-btn tertiaire" onclick="ouvrirListeSourates('recitation')">🎙️ Réciter (écoute active)</button>
-  <div style="text-align:center; font-family:sans-serif; font-size:12px; color:#999; margin-top:20px;">build: FIX4-debug-natif-brut</div>
+  <div style="text-align:center; font-family:sans-serif; font-size:12px; color:#999; margin-top:20px;">build: FIX5-panneau-robuste</div>
 </div>
 
 <div class="screen hidden" id="screen-liste-sourates">
@@ -392,7 +392,7 @@
   <div id="statut-ecoute" class="statut-ecoute">🎙️ Écoute en cours…</div>
   <div id="mot-entendu-live" class="statut-ecoute" style="color:#a67c3d;min-height:18px;"></div>
   <button onclick="toggleDebugNatif()" style="font-size:11px; padding:2px 8px; margin:2px auto; display:block; background:#eee; border:1px solid #ccc; border-radius:4px;">debug natif</button>
-  <div id="debug-natif" class="hidden" style="max-height:120px; overflow-y:auto; background:#111; color:#0f0; font-family:monospace; font-size:11px; padding:6px; border-radius:4px; direction:ltr; text-align:left;"></div>
+  <div id="debug-natif" class="hidden" style="min-height:100px; max-height:160px; overflow-y:auto; overflow-x:hidden; background:#111; color:#0f0; font-family:monospace; font-size:11px; padding:6px; border-radius:4px; direction:ltr; text-align:left; white-space:pre-wrap; word-break:break-word; box-sizing:border-box; width:100%;">(panneau vide — en attente du premier résultat du plugin natif)</div>
   <div id="recitation-texte" class="recitation-texte"></div>
   <div id="aide-suite" class="aide-suite hidden"></div>
   <div class="recitation-actions">
@@ -1340,7 +1340,14 @@ let derniersMotsNatifsEnvoyes = 0;
 // diagnostiquer sur la vraie donnée plutôt que sur un bilan déjà filtré.
 let _logDebugNatif = [];
 function toggleDebugNatif() {
-  document.getElementById('debug-natif').classList.toggle('hidden');
+  const panneau = document.getElementById('debug-natif');
+  panneau.classList.toggle('hidden');
+  if (!panneau.classList.contains('hidden')) {
+    const heure = new Date().toISOString().substr(11, 12);
+    _logDebugNatif.push(heure + ' | [panneau ouvert — ' + _logDebugNatif.length + ' entrées déjà reçues du plugin avant cet instant]');
+    panneau.textContent = _logDebugNatif.join('\n');
+    panneau.scrollTop = panneau.scrollHeight;
+  }
 }
 function afficherDebugNatif(txt) {
   const heure = new Date().toISOString().substr(11, 12);
