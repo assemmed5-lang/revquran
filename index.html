@@ -1410,7 +1410,12 @@ async function demarrerEcouteNative() {
     window._recitationListener = await SRPlugin.addListener('partialResults', function(data) {
       reinitialiserTimerSilence();
       const txt = (data && data.matches && data.matches[0]) ? data.matches[0] : '';
-      const mots = txt.trim().split(/\s+/).filter(Boolean);
+      const motsBruts = txt.trim().split(/\s+/).filter(Boolean);
+      // Toujours dédoublonner globalement AVANT toute autre logique, pour
+      // que le compteur (derniersMotsNatifsEnvoyes) reste cohérent d'un
+      // appel à l'autre — on ne mélange jamais longueur "brute" et longueur
+      // "dédoublonnée".
+      const mots = collapserDoublonGlobal(motsBruts);
       // BUG TROUVÉ VIA LE FICHIER DE BILAN : le plugin natif ne renvoie pas
       // toujours une transcription qui grandit sans fin — après chaque
       // pause, il redémarre souvent son écoute en interne et repart d'une
