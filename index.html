@@ -354,7 +354,7 @@
   <button class="menu-btn" onclick="ouvrirListeSourates('consultation')">Consulter les erreurs</button>
   <button class="menu-btn secondaire" onclick="ouvrirListeSourates('entree')">Introduire des nouvelles erreurs</button>
   <button class="menu-btn tertiaire" onclick="ouvrirListeSourates('recitation')">🎙️ Réciter (écoute active)</button>
-  <div style="text-align:center; font-family:sans-serif; font-size:12px; color:#999; margin-top:20px;">build: FIX5-panneau-robuste</div>
+  <div style="text-align:center; font-family:sans-serif; font-size:12px; color:#999; margin-top:20px;">build: FIX7-jugement-differe</div>
 </div>
 
 <div class="screen hidden" id="screen-liste-sourates">
@@ -546,6 +546,30 @@ let versetActuel = null;
 let modeActuel = 'entree';
 let pageActuelleIndex = 0;
 let fautes = {};
+
+// ---- ÉTAT JUGEMENT DIFFÉRÉ (architecture façon tilawa) ----
+// onresult/partialResults n'appellent plus JAMAIS traiterMotEntendu
+// directement. Ils accumulent seulement les mots CONFIRMÉS dans une file
+// d'attente légère. Un tick périodique (evaluerFileAttente, indépendant du
+// débit de parole) dépile cette file et fait le jugement réel — comparaison
+// à la banque de mots, avancement du pointeur, reconstruction de
+// l'affichage. C'est exactement le principe qui rend tilawa insensible au
+// rythme irrégulier du moteur : le jugement n'a jamais lieu "en direct".
+let motsEnAttenteJugement = [];
+let affichageProgressionSale = false;
+let intervalleEvaluation = null;
+const PERIODE_EVALUATION_MS = 2500;
+
+function evaluerFileAttente() {
+  if (!motsEnAttenteJugement.length) return;
+  const lot = motsEnAttenteJugement;
+  motsEnAttenteJugement = [];
+  lot.forEach(traiterMotEntendu);
+  if (affichageProgressionSale) {
+    majAffichageRecitation();
+    affichageProgressionSale = false;
+  }
+}
 
 // ---- STOCKAGE PERSISTANT ----
 function chargerFautes() {
@@ -1153,6 +1177,8 @@ function demarrerRecitation(sourateId, versetDepart) {
   bufferBrutEnAttente = [];
   suspectsSession = [];
   erreursSession = [];
+  motsEnAttenteJugement = [];
+  affichageProgressionSale = false;
 
   document.getElementById('recitation-titre').textContent = 'سورة ' + sourateEnCours.nom;
   document.getElementById('screen-choix-depart').classList.add('hidden');
@@ -1239,7 +1265,7 @@ function gererFinReconnaissance() {
   // perdre aucun mot, puis on relance (après un court délai, jamais
   // instantanément — voir plus bas).
   if (interimTexteCourant.trim()) {
-    interimTexteCourant.trim().split(/\s+/).filter(Boolean).forEach(traiterMotEntendu);
+    motsEnAttenteJugement.push.apply(motsEnAttenteJugement, interimTexteCourant.trim().split(/\s+/).filter(Boolean));
     interimTexteCourant = '';
   }
   if (!ecouteActive) { console.log('[DEBUG micro] ecouteActive=false, on ne redémarre pas'); return; }
@@ -1302,6 +1328,10 @@ async function demarrerEcoute() {
     window._recogWatchdog = setInterval(function() {
       if (!ecouteActive) { clearInterval(window._recogWatchdog); return; }
     }, 500);
+    // Tick de jugement périodique — voir motsEnAttenteJugement/evaluerFileAttente
+    // plus haut. C'est le SEUL endroit qui juge réellement les mots.
+    if (intervalleEvaluation) clearInterval(intervalleEvaluation);
+    intervalleEvaluation = setInterval(evaluerFileAttente, PERIODE_EVALUATION_MS);
   } catch (e) {
     alert("Impossible de démarrer le micro : " + (e.message || e));
     document.getElementById('btn-toggle-ecoute').textContent = "🎙️ Démarrer l'écoute";
@@ -1462,11 +1492,13 @@ async function demarrerEcouteNative() {
       }
       if (mots.length > derniersMotsNatifsEnvoyes) {
         const nouveauxMots = supprimerBouclesHallucinees(mots.slice(derniersMotsNatifsEnvoyes));
-        nouveauxMots.forEach(traiterMotEntendu);
+        motsEnAttenteJugement.push.apply(motsEnAttenteJugement, nouveauxMots);
         derniersMotsNatifsEnvoyes = mots.length;
       }
     });
     await SRPlugin.start({ language: 'ar-SA', partialResults: true, popup: false, maxResults: 1 });
+    if (intervalleEvaluation) clearInterval(intervalleEvaluation);
+    intervalleEvaluation = setInterval(evaluerFileAttente, PERIODE_EVALUATION_MS);
   } catch (e) {
     alert('Erreur au démarrage de la reconnaissance native : ' + (e.message || e));
     document.getElementById('btn-toggle-ecoute').textContent = "🎙️ Démarrer l'écoute";
@@ -1490,6 +1522,8 @@ function arreterEcoute() {
   }
   clearTimeout(timerSilence);
   if (window._recogWatchdog) { clearInterval(window._recogWatchdog); window._recogWatchdog = null; }
+  evaluerFileAttente();
+  if (intervalleEvaluation) { clearInterval(intervalleEvaluation); intervalleEvaluation = null; }
   const bouton = document.getElementById('btn-toggle-ecoute');
   if (bouton) bouton.classList.remove('ecoute-active');
 }
@@ -1517,8 +1551,10 @@ function traiterResultatVocal(event) {
   for (let i = event.resultIndex; i < event.results.length; i++) {
     const resultat = event.results[i];
     if (resultat.isFinal) {
-      resultat[0].transcript.trim().split(/\s+/).filter(Boolean).forEach(traiterMotEntendu);
+      afficherDebugNatif('[FINAL] ' + resultat[0].transcript);
+      motsEnAttenteJugement.push.apply(motsEnAttenteJugement, resultat[0].transcript.trim().split(/\s+/).filter(Boolean));
     } else {
+      afficherDebugNatif('[interim] ' + resultat[0].transcript);
       interim += resultat[0].transcript;
     }
   }
@@ -1559,7 +1595,7 @@ function traiterMotEntendu(motBrut) {
     bufferEnAttente = [];
     bufferBrutEnAttente = [];
     pointeurMots++;
-    majAffichageRecitation();
+    affichageProgressionSale = true;
     return;
   }
 
@@ -1628,7 +1664,7 @@ function traiterEcart(indexDebut, indexFin, motsEntendus) {
   }
 
   pointeurMots = indexFin + 1;
-  majAffichageRecitation();
+  affichageProgressionSale = true;
 }
 
 // ---- Effet sonore (bip généré, pas de fichier externe requis) ----
