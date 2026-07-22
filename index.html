@@ -354,7 +354,7 @@
   <button class="menu-btn" onclick="ouvrirListeSourates('consultation')">Consulter les erreurs</button>
   <button class="menu-btn secondaire" onclick="ouvrirListeSourates('entree')">Introduire des nouvelles erreurs</button>
   <button class="menu-btn tertiaire" onclick="ouvrirListeSourates('recitation')">🎙️ Réciter (écoute active)</button>
-  <div style="text-align:center; font-family:sans-serif; font-size:12px; color:#999; margin-top:20px;">build: FIX8-curseur-final-navigateur</div>
+  <div style="text-align:center; font-family:sans-serif; font-size:12px; color:#999; margin-top:20px;">build: FIX9-curseur-global-navigateur</div>
 </div>
 
 <div class="screen hidden" id="screen-liste-sourates">
@@ -556,7 +556,7 @@ let fautes = {};
 // l'affichage. C'est exactement le principe qui rend tilawa insensible au
 // rythme irrégulier du moteur : le jugement n'a jamais lieu "en direct".
 let motsEnAttenteJugement = [];
-let curseurFinalParIndex = {};
+let motsFinauxNavigateurEnvoyes = 0;
 let affichageProgressionSale = false;
 let intervalleEvaluation = null;
 const PERIODE_EVALUATION_MS = 2500;
@@ -1180,7 +1180,7 @@ function demarrerRecitation(sourateId, versetDepart) {
   erreursSession = [];
   motsEnAttenteJugement = [];
   affichageProgressionSale = false;
-  curseurFinalParIndex = {};
+  motsFinauxNavigateurEnvoyes = 0;
 
   document.getElementById('recitation-titre').textContent = 'سورة ' + sourateEnCours.nom;
   document.getElementById('screen-choix-depart').classList.add('hidden');
@@ -1270,7 +1270,7 @@ function gererFinReconnaissance() {
     motsEnAttenteJugement.push.apply(motsEnAttenteJugement, interimTexteCourant.trim().split(/\s+/).filter(Boolean));
     interimTexteCourant = '';
   }
-  curseurFinalParIndex = {};
+  motsFinauxNavigateurEnvoyes = 0;
   if (!ecouteActive) { console.log('[DEBUG micro] ecouteActive=false, on ne redémarre pas'); return; }
 
   // Filet de sécurité : si le moteur échoue à démarrer réellement (jamais
@@ -1555,22 +1555,23 @@ function traiterResultatVocal(event) {
     const resultat = event.results[i];
     if (resultat.isFinal) {
       afficherDebugNatif('[FINAL#' + i + '] ' + resultat[0].transcript);
-      // BUG RÉEL TROUVÉ VIA LE PANNEAU DE DEBUG : sur cet appareil, le moteur
-      // redéclare "isFinal" plusieurs fois par seconde sur LE MÊME énoncé en
-      // cours, avec un texte qui grandit progressivement (16 mots, 16, 16,
-      // 17, 17, 18...) au lieu d'un seul "final" par segment de parole. Sans
-      // ce compteur, chaque appel renvoyait TOUT le texte depuis le début du
-      // verset comme s'il était entièrement nouveau — d'où les dizaines de
-      // renvois du même texte vers le jugement (exactement le motif de recul
-      // progressif/dédoublement observé depuis le début). On ne transmet
-      // donc que les mots AU-DELÀ de ce qui a déjà été envoyé pour CET index
-      // de résultat précis (un nouvel index = un nouveau segment distinct,
-      // donc son propre compteur).
+      // BUG RÉEL TROUVÉ VIA LE PANNEAU DE DEBUG : sur cet appareil, chaque
+      // appel isFinal utilise un NOUVEL index (#0, #1, #2...) mais avec un
+      // texte cumulé depuis le début de l'énoncé (16 mots, puis 17, puis
+      // 18...) au lieu d'un segment réellement nouveau. Sans compteur
+      // global, chaque appel renvoyait TOUT le texte comme s'il était
+      // entièrement nouveau — d'où les dizaines de renvois du même texte
+      // vers le jugement (le motif de recul progressif/dédoublement observé
+      // depuis le début). On ne transmet que les mots AU-DELÀ de ce qui a
+      // déjà été envoyé au total ; si le texte redevient plus court qu'avant,
+      // c'est qu'un vrai nouvel énoncé a commencé, on repart de zéro.
       const motsFinaux = resultat[0].transcript.trim().split(/\s+/).filter(Boolean);
-      const dejaEnvoyes = curseurFinalParIndex[i] || 0;
-      if (motsFinaux.length > dejaEnvoyes) {
-        motsEnAttenteJugement.push.apply(motsEnAttenteJugement, motsFinaux.slice(dejaEnvoyes));
-        curseurFinalParIndex[i] = motsFinaux.length;
+      if (motsFinaux.length < motsFinauxNavigateurEnvoyes) {
+        motsFinauxNavigateurEnvoyes = 0;
+      }
+      if (motsFinaux.length > motsFinauxNavigateurEnvoyes) {
+        motsEnAttenteJugement.push.apply(motsEnAttenteJugement, motsFinaux.slice(motsFinauxNavigateurEnvoyes));
+        motsFinauxNavigateurEnvoyes = motsFinaux.length;
       }
     } else {
       afficherDebugNatif('[interim] ' + resultat[0].transcript);
